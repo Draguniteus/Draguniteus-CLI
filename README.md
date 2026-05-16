@@ -1,249 +1,416 @@
 # Draguniteus 🐉
 
-**A dragon-themed autonomous CLI coding agent — forge software from intent.**
+<!-- super bad ass ASCII dragon banner -->
+<pre>
+                                        ,,╓╖,
+                                   ,╔╫╫╫╫╫╫╫╫╫╫N
+                               ,╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫,
+                           ,╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫,
+                       ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╗
+                   ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+                 ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+               ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+             ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+            ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+           ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+          ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+         ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+        ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+       ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+      ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+     ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+    ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+   ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+  ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+ ╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
+╔╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫╫
 
-> *"With a breath of fire, I forge code from intent."*
+        ╔╗╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╔╗
+        ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║
+        ║ D R A G U N I T E U S ║   A U T O N O M O U S   C O D I N G   A G E N T ║
+        ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║ ║
+        ╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝╚╝
+</pre>
+
+**Autonomous CLI coding agent — forge software from intent.**
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-gold?style=for-the-badge">
-  <img src="https://img.shields.io/badge/python-3.12+-blue?style=for-the-badge">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge">
+  <a href="https://github.com/Draguniteus/Draguniteus-CLI/stargazers">
+    <img src="https://img.shields.io/github/stars/Draguniteus/Draguniteus-CLI?style=for-the-badge&color=gold&labelColor=1a1a2e" />
+  </a>
+  <a href="https://github.com/Draguniteus/Draguniteus-CLI/forks">
+    <img src="https://img.shields.io/github/forks/Draguniteus/Draguniteus-CLI?style=for-the-badge&color=cyan&labelColor=1a1a2e" />
+  </a>
+  <img src="https://img.shields.io/badge/python-3.12+-blue?style=for-the-badge&labelColor=1a1a2e" />
+  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge&labelColor=1a1a2e" />
+  <img src="https://img.shields.io/badge/version-0.1.0-gold?style=for-the-badge&labelColor=1a1a2e" />
 </p>
+
+---
+
+<!-- terminal demo -->
+## Watch Draguniteus Work 🐉
+
+```
+❯ analyze the codebase and find security vulnerabilities
+
+[D] Initializing 3 parallel agents...
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  [D] Draguniteus — 3 agents running                        │
+├──────────────────┬──────────────────┬──────────────────────┤
+│  [explorer]      │  [security]      │  [performance]       │
+│  MiniMax-M2.7    │  MiniMax-M2.5    │  MiniMax-M2.5        │
+│  ◆ Analyzing...  │  ◆ 2 tools       │  ◆ Done             │
+│                  │                  │                      │
+│  Scanning 247    │  Reviewing...    │  Found 3 issues     │
+│  files...        │                  │                      │
+│                  │                  │                      │
+│  [Tab] Next      │  [Tab] Next      │  [Tab] Next         │
+└──────────────────┴──────────────────┴──────────────────────┘
+
+[D] Arena Results: explorer (M2.7) won — found 12 files, 3 critical issues
+```
 
 ---
 
 ## What is Draguniteus?
 
-Draguniteus is a fully autonomous CLI coding agent that understands your intent and executes complex multi-step engineering tasks in your terminal. It reads your codebase, writes and edits files, runs shell commands, manages git branches, spawns parallel sub-agents, and maintains project memory — all with dramatic dragon-themed flair.
+Draguniteus is a **fully autonomous CLI coding agent** that understands your intent and executes complex multi-step engineering tasks in your terminal. It reads your codebase, writes and edits files, runs shell commands, manages git branches, spawns parallel sub-agents, and maintains project memory — all with dramatic dragon-themed flair.
 
-It's built for developers who want an agent that:
+Built for developers who want an agent that:
 - Works in a **real terminal** with **vim keybindings** and **mouse support**
-- Can run **multiple specialized agents in parallel** and compare their results
+- Can run **multiple specialized agents in parallel** with live streaming
+- Compares model outputs head-to-head in **Arena Mode**
 - Plans large-scale **refactors** with rollback safety
 - Learns your codebase's conventions and applies them consistently
 - Connects to **MCP servers** for extensible tool integrations
 
 ---
 
-## Features
+## Features at a Glance
 
-### 🤖 Autonomous Agent Loop
-Draguniteus runs a streaming tool-calling loop: it reads files, analyzes code, writes changes, runs tests, and iteratively refines until the task is complete. No single-shot prompts — it thinks, acts, observes, and adjusts.
-
-### ⚡ Parallel Multi-Agent Orchestration
-Run up to **8 concurrent sub-agents** in a live grid. Each agent gets its own worktree, streaming output, thinking display, and tool counter. Compare models head-to-head in **Arena Mode** when using different model tiers.
-
-### 🖥️ Native Terminal UI
-Fullscreen TUI with **Rich.Live** panels — flicker-free real-time updates per agent. **Vim keybindings** (`j/k/gg/G//n/N`) for navigation, **Shift+Tab** to cycle permission modes, **Ctrl+C** to interrupt all agents gracefully, Tab to cycle panel focus.
-
-### 🧠 Project Memory
-Drop a `DRAGUNITEUS.md` in any project root — it auto-loads your conventions, architecture decisions, and context on every session. Like a senior developer who read your docs before starting.
-
-### 📋 Skills Framework
-Markdown-based skills with YAML frontmatter. Describe any workflow (code review, commit strategy, refactoring pattern) as a skill and invoke it with `/skill <name>`. Built-in skills: feature-dev, frontend-design, mcp-integration, project-conventions, skill-development.
-
-### 🛡️ Permission System
-Never accidentally `rm -rf /`. Draguniteus ships with a rules engine that classifies operations as **ask/auto-approve/deny**. Dangerous commands get blocked, safe ones pass through, everything else prompts.
-
-### 🔌 MCP Integration
-Connect to any MCP server over stdio. Draguniteus auto-discovers tools, handles JSON-RPC handshakes, and routes MCP tool calls through the same streaming interface as native tools.
-
-### 🗃️ Persistent Sessions
-Every REPL session is saved as a JSONL transcript. Resume where you left off with `-c`. Sessions include token counts, cost tracking, and git branch state.
-
-### 🔍 Code Intelligence
-Semantic search across your codebase, symbol indexing, code explanation, and semantic graph for "find where this function is called" queries. Turns your editor into an intelligent codebase explorer.
-
-### 🎯 Plugin System
-Markdown-based plugins with PreToolUse/PostToolUse hooks. Write a `.md` file with YAML frontmatter — Draguniteus discovers it, registers its commands, and executes it as a system directive.
+<p align="center">
+<img src="https://img.shields.io/badge/-Autonomous%20Agent%20Loop-cyan?style=flat&logo=gear&logoColor=cyan" height="22" />
+<img src="https://img.shields.io/badge/-Parallel%20Sub%20Agents-gold?style=flat&logo=fire&logoColor=gold" height="22" />
+<img src="https://img.shields.io/badge/-Rich%20TUI%20Panels-red?style=flat&logo=terminal&logoColor=red" height="22" />
+<img src="https://img.shields.io/badge/-Arena%20Mode%20Battle-FF6B35?style=flat&logo=swords&logoColor=FF6B35" height="22" />
+<img src="https://img.shields.io/badge/-Vim%20%2B%20Mouse-9B59B6?style=flat&logo=keyboard&logoColor=9B59B6" height="22" />
+<img src="https://img.shields.io/badge/-Refactor%20Planner%20%2B%20Rollback-2ECC71?style=flat&logo=git&logoColor=2ECC71" height="22" />
+<img src="https://img.shields.io/badge/-Project%20Memory-3498DB?style=flat&logo=book&logoColor=3498DB" height="22" />
+<img src="https://img.shields.io/badge/-Skills%20Framework-E74C3C?style=flat&logo=star&logoColor=E74C3C" height="22" />
+<img src="https://img.shields.io/badge/-MCP%20Integration-1ABC9C?style=flat&logo=puzzle&logoColor=1ABC9C" height="22" />
+<img src="https://img.shields.io/badge/-Code%20Intelligence-F1C40F?style=flat&logo=search&logoColor=F1C40F" height="22" />
+<img src="https://img.shields.io/badge/-Persistent%20Sessions-95A5A6?style=flat&logo=clock&logoColor=95A5A6" height="22" />
+<img src="https://img.shields.io/badge/-Plugin%20Hooks-FF6B35?style=flat&logo=plugin&logoColor=FF6B35" height="22" />
+</p>
 
 ---
 
-## Installation
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/Draguniteus/Draguniteus-CLI.git
 cd Draguniteus-CLI
 pip install -e .
 
-# Windows
-python -m draguniteus --help
-```
-
----
-
-## First Launch
-
-On first launch, enter your API key at the prompt. It's saved to `~/.draguniteus/settings.json`.
-
-Or set it via environment variable:
-
-```bash
-export DRAGUNITEUS_API_KEY=your_key_here
+# First launch — enter your API key at the prompt
 python -m draguniteus
+
+❯ build a REST API with authentication
 ```
 
 ---
 
-## Usage
+## 🤖 Autonomous Agent Loop
 
-### Interactive REPL
+Draguniteus runs a **streaming tool-calling loop** — think, act, observe, adjust:
+
+```
+❯ migrate the auth system to JWT
+
+[D] Breaking down task into steps...
+[D] Analyzing current auth implementation...
+[D] Found: session.py, middleware/auth.py, models/user.py
+
+[D] Planning changes...
+  ✅ Create JWT utility module (src/auth/jwt_utils.py)
+  ✅ Update User model with JWT fields
+  ✅ Replace session middleware with JWT middleware
+  ✅ Update all API routes to use new auth
+  ✅ Write migration tests
+
+[D] Executing plan (6 steps)...
+  [1/6] Writing JWT utility module...
+  [2/6] Updating User model...
+  [3/6] Replacing session middleware...
+  [4/6] Updating API routes...
+  [5/6] Writing auth tests...
+  [6/6] Running test suite... ✅ All 47 tests pass
+
+[D] Done — auth system migrated to JWT. 0 breaking changes.
+```
+
+---
+
+## ⚡ Parallel Multi-Agent Orchestration
+
+Run up to **8 concurrent sub-agents** in a live grid with real-time streaming:
+
+```bash
+/orchestrate "analyze the entire codebase" \
+  --agent explorer --task "map project structure and dependencies" \
+  --agent security --task "find SQL injection, XSS, auth bypass vulnerabilities" \
+  --agent perf --task "identify N+1 queries, missing indexes, memory leaks" \
+  --agent review --task "check code quality and patterns consistency"
+```
+
+When **3+ agents with different model tiers** are used, **Arena Mode** activates automatically:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  🏟️  ARENA MODE — 4 agents competing                                 │
+├─────────────────┬─────────────────┬─────────────────┬────────────────┤
+│  ⬡ explorer    │  ⬡ security     │  ⬡ perf         │  ⬡ review      │
+│  ⚡ M2.7        │  ⚡ M2.5         │  ⚡ M2.5         │  ⚡ M2.1        │
+│  Speed: 45s    │  Speed: 32s     │  Speed: 28s     │  Speed: 18s    │
+│  Quality: 9/10 │  Quality: 8/10  │  Quality: 8/10  │  Quality: 6/10 │
+│  Tools: 12     │  Tools: 8       │  Tools: 7       │  Tools: 4      │
+│  ✓ DONE        │  ✓ DONE         │  ✓ DONE         │  ✓ DONE        │
+│  🏆 SELECTED   │                 │                 │                │
+└─────────────────┴─────────────────┴─────────────────┴────────────────┘
+
+Winner: [explorer] — found 12 files, 3 critical vulnerabilities, 8 performance issues
+```
+
+### Controls
+| Key | Action |
+|-----|--------|
+| `Tab` | Cycle panel focus |
+| `Ctrl+C` | Interrupt all agents |
+| `↑/↓` | Scroll agent output |
+
+---
+
+## 🖥️ Native Terminal UI
+
+Fullscreen TUI with **flicker-free Rich.Live panels** — one `Live` render per agent:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ [D] Draguniteus — 4 agents running • elapsed 32s            │
+├─────────────────┬─────────────────┬───────────────────────────┤
+│  [explorer]     │  [security]     │  [perf]                   │
+│  ⚡ M2.7        │  ⚡ M2.5        │  ⚡ M2.5                   │
+│  ◆ Thinking...  │  ◆ 3 tools     │  ✓ Done                   │
+│                 │                 │                           │
+│  Analyzing...   │  Reviewing      │  Found: 8 bottlenecks     │
+│  247 files...   │  42 files...    │  • N+1 in user lookup     │
+│                 │                 │  • Missing index on email │
+│                 │                 │  • Cache invalidation bug │
+├─────────────────┴─────────────────┴───────────────────────────┤
+│  [Tab] Next panel   [Ctrl+C] Interrupt   [Esc] Exit panel   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Vim Keybindings (REPL)
+| Key | Action |
+|-----|--------|
+| `j/k` | Move down/up through history |
+| `gg` | Jump to start of history |
+| `G` | Jump to end of history |
+| `/` | Search history |
+| `n/N` | Next/prev search result |
+| `Shift+Tab` | Cycle permission mode |
+| `Ctrl+T` | Toggle task list |
+| `Ctrl+E` | Expand tool results |
+
+---
+
+## 🧠 Project Memory
+
+Drop a `DRAGUNITEUS.md` in any project root — it auto-loads your conventions:
+
 ```bash
 python -m draguniteus
-❯ build a user auth system with JWT
+/init   # creates DRAGUNITEUS.md with your project structure
 ```
 
-### One-shot mode
-```bash
-python -m draguniteus -p "read pyproject.toml and explain the structure"
-```
-
-### Continue last session
-```bash
-python -m draguniteus -c
-```
-
-### Minimal theme (no ASCII art)
-```bash
-python -m draguniteus --minimal
-```
-
-### Piped input
-```bash
-cat error.log | python -m draguniteus "analyze this error"
-```
-
----
-
-## Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all commands |
-| `/plan <task>` | Create and review a refactoring plan |
-| `/effort [level]` | Set reasoning depth (low/medium/high/max) |
-| `/compact` | Compress context window |
-| `/memory` | Show/edit project memory |
-| `/init` | Create DRAGUNITEUS.md in current project |
-| `/agents` | List available sub-agents |
-| `/orchestrate` | Run parallel multi-agent orchestration |
-| `/new` | Start a new session |
-| `/reset` | Clear session and start fresh |
-| `/exit` | Exit |
-| `/skills` | List all available skills |
-| `/transcript` | Show session transcript summary |
-| `/vim` | Toggle vim editing mode |
-| `/doctor` | Run environment diagnostics |
-
----
-
-## Multi-Agent Orchestration
-
-```bash
-/orchestrate "analyze codebase" \
-  --agent explorer --task "explore project structure" \
-  --agent security --task "find security issues" \
-  --agent perf --task "find performance bottlenecks"
-```
-
-- **Arena Mode** activates automatically when ≥3 agents with different model tiers are used
-- Arena shows a live comparison matrix: speed, quality score, tools used per agent
-- **Ctrl+C** interrupts all agents. **Tab** cycles panel focus.
-
----
-
-## Project Memory
-
-Create a `DRAGUNITEUS.md` in any project:
-
-```bash
-python -m draguniteus
-/init
-```
-
-Content example:
 ```markdown
-# Project Conventions
+# My Project Conventions
 
 ## Stack
-- Python 3.12, FastAPI, SQLite
-- React 18 + Vite
+- Python 3.12, FastAPI, PostgreSQL
+- React 18 + Vite, TypeScript
 
 ## Architecture
-- API routes in /src/api
-- Business logic in /src/services
-- No inline SQL — use the ORM
+- API routes: /src/api/routes
+- Business logic: /src/services
+- No inline SQL — always use the ORM
 
 ## Git Workflow
-- branch per feature
+- branch per feature (feat/, fix/, refactor/)
 - squash merge to main
-- never force push
+- never force push to main
+
+## Code Style
+- Type hints required on all public functions
+- docstrings on all classes and public methods
+- max line length: 100
+```
+
+Now every session knows your stack, your patterns, your git workflow — no repeated context needed.
+
+---
+
+## 📋 Skills Framework
+
+Markdown-based extensible skills with YAML frontmatter:
+
+```
+/skill add code-review "review PRs for security, performance, and style"
+/skill list
+/skill bench code-review
+```
+
+Built-in skills:
+- `feature-dev` — Structured feature development workflow
+- `frontend-design` — React best practices and design principles
+- `mcp-integration` — Model Context Protocol server integration
+- `project-conventions` — Enforce project-specific standards
+- `skill-development` — Create and publish Draguniteus skills
+
+---
+
+## 🛡️ Permission System
+
+Classifies every operation before execution:
+
+```
+[D] Blocking dangerous operation: rm -rf / --pattern matched deny rule
+[D] Auto-approving: git commit, npm install, pytest
+[D] Asking for permission: Write src/auth.py
+  Allow this Write operation? [y/n/a]
+```
+
+Stored in `~/.draguniteus/permissions.json`. Default rules:
+- `rm -rf *`, `mkfs`, `dd` → **deny**
+- `git`, `npm`, `pytest`, `ls`, `cat` → **auto_approve**
+- `Write`, `Edit`, `Bash` (interactive) → **ask**
+
+---
+
+## 🔌 MCP Integration
+
+Connect to any MCP server. Draguniteus auto-discovers tools and handles JSON-RPC:
+
+```bash
+# servers configured in ~/.draguniteus/settings.json
+{
+  "mcp_servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    }
+  }
+}
+```
+
+Draguniteus lists 14+ tools per MCP server, routes calls over stdio with 10MB line cap.
+
+---
+
+## 🗃️ Persistent Sessions
+
+Every REPL session saved as JSONL. Resume where you left off:
+
+```bash
+python -m draguniteus -c              # continue last session
+python -m draguniteus --resume sess_xxx  # resume specific session
+
+# Sessions include:
+#   - Full conversation transcript
+#   - Token counts + cost tracking per turn
+#   - Git branch state at each turn
+#   - Tracked files (rules injection)
 ```
 
 ---
 
-## Architecture
+## 🔍 Code Intelligence
+
+Semantic search across your entire codebase:
 
 ```
-draguniteus/
-├── src/draguniteus/
-│   ├── cli.py              # REPL, slash commands, Typer app
-│   ├── agent.py            # Streaming tool-calling loop
-│   ├── client.py           # API client + retry logic
-│   ├── config.py           # Layered config (env/file/CLI)
-│   ├── orchestrator.py     # Multi-agent parallel executor
-│   ├── session.py          # JSONL transcript + session store
-│   ├── permissions.py      # Ask/Auto-approve/Deny rules engine
-│   ├── rules.py            # Rule injection + injection sanitization
-│   ├── hook_runner.py      # PreToolUse/PostToolUse plugin hooks
-│   ├── tui/
-│   │   ├── panels.py       # Rich.Grid multi-agent live panels
-│   │   ├── arena.py        # Model comparison matrix (Arena Mode)
-│   │   └── plan_viewer.py  # Collapsible refactor plan viewer
-│   ├── tools/
-│   │   ├── filesystem.py   # Read/Write/Edit/Glob/Grep
-│   │   ├── shell.py        # Bash with 100KB output cap
-│   │   ├── git.py          # Git operations
-│   │   ├── mcp.py          # MCP client (stdio, 10MB line cap)
-│   │   ├── mcp_tools.py    # MCP tool routing
-│   │   ├── orchestrate.py  # Parallel agent orchestration tool
-│   │   ├── review.py       # Multi-agent code review pipeline
-│   │   ├── minimax.py      # Media generation (image/video/audio)
-│   │   ├── code_intelligence.py  # Symbol index + semantic search
-│   │   └── navigation.py   # Semantic code navigation
-│   ├── memory/
-│   │   ├── manager.py      # DRAGUNITEUS.md + daily notes
-│   │   ├── pattern_library.py   # Learned tool sequence patterns
-│   │   ├── conversation_archive.py  # Infinite context compression
-│   │   └── semantic_graph.py  # Code relationship graph
-│   ├── repl/
-│   │   └── prompt_toolkit_input.py  # Vim keys + mouse support
-│   ├── worktree/
-│   │   └── manager.py      # Per-agent git worktree isolation
-│   ├── plugins/
-│   │   └── manager.py      # Plugin discovery + hook registration
-│   ├── refactor/
-│   │   └── autonomous.py    # Large-scale refactor planner + executor
-│   ├── voice/
-│   │   ├── input.py        # Voice listener
-│   │   ├── output.py       # Voice speaker (TTS)
-│   │   └── pair.py         # Pair programming mode
-│   ├── skills/
-│   │   └── eval.py         # Skill evaluation + benchmarking
-│   ├── agents/
-│   │   └── loader.py       # Agent discovery + loading
-│   └── production/
-│       └── monitor.py      # Health checks + webhook alerts
-├── skills/                 # Markdown-based user skills
-├── agents/                 # Custom sub-agent definitions
-└── .draguniteus/           # Per-project config (auto-created)
+/index src/           # build semantic index
+
+❯ where is the user authentication middleware?
+
+[Search Results]
+  • src/middleware/auth.py:42 — "class AuthMiddleware"
+  • src/routes/auth.py:15 — "authenticate_user()"
+  • tests/test_auth.py:78 — "def test_auth_middleware"
+  • src/auth/jwt_utils.py:8 — "def decode_jwt_token"
+
+[D] Found 4 matches across 4 files. Semantic graph updated.
 ```
 
 ---
 
-## Configuration
+## 🎯 Plugin System
 
-Default config: `~/.draguniteus/settings.json`
+PreToolUse / PostToolUse hooks as markdown files:
+
+```markdown
+---
+description: Security audit before any Write/Edit operation
+triggers: [Write, Edit]
+---
+
+# Check for hardcoded secrets before writing
+
+- If the content contains `password = ` or `api_key = ` or `AWS_SECRET`
+  → Block the operation and warn the user
+- If the content contains `TODO` or `FIXME` with no associated ticket
+  → Add a comment reminder
+```
+
+Plugins auto-discovered from `~/.draguniteus/plugins/`.
+
+---
+
+## 🔬 Refactor with Confidence
+
+Plan large-scale transformations, preview changes, execute with rollback:
+
+```
+/plan "convert all callback-style async to async/await"
+
+## Refactor Plan: callback → async/await conversion
+
+Risk level:    medium
+Files affected: 14
+Steps:          12
+
+Changes:
+  ✅ 1. src/api/handlers.py — Matches: callback pattern in on_success
+  ✅ 2. src/api/handlers.py — Matches: callback in on_error chain
+  ⏳ 3. src/db/connection.py — Pending...
+  ...
+
+[D] Use /refactor --dry-run to preview before applying
+```
+
+On failure during execution, Draguniteus **rolls back ALL changes** and restores original files.
+
+---
+
+## ⚙️ Configuration
 
 ```json
 {
@@ -256,58 +423,135 @@ Default config: `~/.draguniteus/settings.json`
 }
 ```
 
-Override via CLI flags:
+Environment variables override config file:
+
 ```bash
-python -m draguniteus --model MiniMax-M2.7 --max-turns 20
+export DRAGUNITEUS_API_KEY=your_key
+export DRAGUNITEUS_MODEL=MiniMax-M2.7
+export DRAGUNITEUS_MAX_TOKENS=16384
+python -m draguniteus
 ```
 
 ---
 
-## Environment Variables
+## 🛡️ Output Guards (Security Hardening)
 
-| Variable | Description |
-|----------|-------------|
-| `DRAGUNITEUS_API_KEY` | Your API key |
-| `DRAGUNITEUS_BASE_URL` | API base URL |
-| `DRAGUNITEUS_MODEL` | Model name |
-| `DRAGUNITEUS_MAX_TOKENS` | Max response tokens |
-| `DRAGUNITEUS_CONFIG` | Path to config file |
+Draguniteus is built to survive runaway output:
 
----
-
-## Output Size Guards
-
-Draguniteus is hardened against runaway output:
-- **Agent text**: 10 MB cap — truncates with `[...output truncated...]`
-- **Tool results**: 500 KB cap per result
-- **Bash output**: 100 KB cap (tail of output preserved)
-- **MCP line reads**: 10 MB cap per line (prevents memory exhaustion)
+| Guard | Limit | Behavior |
+|-------|-------|----------|
+| Agent text | 10 MB | Truncates with `[...output truncated...]` |
+| Tool result | 500 KB | Truncates, excess discarded |
+| Bash stdout | 100 KB | Preserves tail of output |
+| MCP line read | 10 MB | Size limit prevents memory exhaustion |
 
 ---
 
-## Keyboard Shortcuts (REPL Mode)
+## 📊 Stats
 
-| Key | Action |
-|-----|--------|
-| `↑/↓` | History navigation |
-| `Ctrl+R` | Reverse history search |
-| `Tab` | Accept suggestion / cycle completions |
-| `Shift+Tab` | Cycle permission mode (ask/acceptEdits/plan/auto) |
-| `Ctrl+T` | Toggle task list |
-| `Ctrl+O` | Show transcript viewer |
-| `Ctrl+E` | Expand last tool results |
-| `Ctrl+B` | Background current command |
-| `Ctrl+C` | Interrupt all running agents |
-| `! cmd` | Direct shell command |
+```
+45+ native tools (Read, Write, Edit, Glob, Grep, Bash, Git, Code Intel, ...)
+46 tool definitions in full tool schema
+8 concurrent sub-agents max
+30 ultra stress test sections — all passing
+218 smoke tests — all passing
+```
 
 ---
 
-## Memory & Context Management
+## Architecture
 
-- **Auto-archive**: After 40 conversation turns, Draguniteus compresses the oldest 20 turns via LLM summarization into a semantic archive. This keeps context fresh without losing history.
-- **Cooldown**: Compression attempts are rate-limited to once per 30 seconds to prevent tight-looping.
-- **Singleton patterns**: PatternLibrary and ConversationArchive are reused across turns — no per-turn disk reload.
+```
+src/draguniteus/
+├── cli.py                  # REPL + slash commands (Typer)
+├── agent.py                # Streaming tool-calling loop + output guards
+├── client.py               # API client with retry logic
+├── orchestrator.py         # Multi-agent parallel executor + progress callbacks
+├── config.py               # Layered config (env > file > CLI)
+├── session.py              # JSONL transcript + session store
+├── permissions.py          # Ask/Auto-approve/Deny rules engine
+├── rules.py                # Rule injection + sanitization (8 regex patterns)
+├── hook_runner.py          # PreToolUse/PostToolUse/PreCompact hooks
+│
+├── tui/
+│   ├── panels.py           # Rich.Grid multi-agent live panels
+│   ├── arena.py            # Model comparison matrix (Arena Mode)
+│   └── plan_viewer.py      # Collapsible refactor plan viewer
+│
+├── tools/
+│   ├── filesystem.py       # Read/Write/Edit/Glob/Grep (100KB output cap)
+│   ├── shell.py            # Bash (100KB output cap)
+│   ├── git.py              # Git operations
+│   ├── mcp.py              # MCP client (stdio, 10MB line cap)
+│   ├── mcp_tools.py        # MCP tool routing
+│   ├── orchestrate.py      # Parallel multi-agent orchestration tool
+│   ├── review.py           # Multi-agent code review pipeline
+│   ├── minimax.py          # Media generation (image/video/audio/music)
+│   ├── code_intelligence.py # Symbol index + semantic search
+│   └── navigation.py        # Semantic code navigation
+│
+├── memory/
+│   ├── manager.py           # DRAGUNITEUS.md + daily notes
+│   ├── pattern_library.py   # Learned tool sequence patterns (singleton)
+│   ├── conversation_archive.py # Infinite context compression (singleton)
+│   └── semantic_graph.py   # Code relationship graph
+│
+├── repl/
+│   └── prompt_toolkit_input.py  # Vim keys + mouse support + Shift+Tab
+│
+├── worktree/
+│   └── manager.py          # Per-agent git worktree isolation
+│
+├── plugins/
+│   └── manager.py          # Plugin discovery + hook registration
+│
+├── refactor/
+│   └── autonomous.py       # Large-scale refactor planner + rollback executor
+│
+├── voice/
+│   ├── input.py            # Voice listener
+│   ├── output.py           # Voice speaker (TTS)
+│   └── pair.py             # Pair programming mode
+│
+└── production/
+    └── monitor.py          # Health checks + webhook alerts
+```
 
 ---
+
+## 🐉 Install It Now
+
+```bash
+git clone https://github.com/Draguniteus/Draguniteus-CLI.git
+cd Draguniteus-CLI
+pip install -e .
+
+python -m draguniteus
+❯ build something legendary
+```
+
+---
+
+<pre>
+                        ___====-_  _-====___
+                  __--^^^     //         \\    ^^--___
+               _-^         ^ (    ●    ●    )         ^_-_
+              -            /\\             /\\            -_
+            _/           /  |  DRAGON     |  \\           -_
+         _-            /   |  MODE       |   \\          -_
+        -              //   |  ACTIVATED |   \\            -
+       _/             /     |___FIRE_____|     \\          _-
+     -               /      \\  🔥  🔥  /      \\         -
+    -                /        \\_______/        \\        -
+    _               /          |       |          \\      _-
+     -             /           |       |           \\    -
+      _           /            |       |            \\  _
+        -        /             |       |             \\-
+         -     /               |       |               \\
+          -  /________________/       \\________________\\-
+             /                                         \\
+            /▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓\\
+              /███████████████████████████████████████████\
+</pre>
 
 🐉 **Breathing fire into code since 2026.**

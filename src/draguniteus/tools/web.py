@@ -1,6 +1,7 @@
 """Web tools: WebFetch and WebSearch."""
 from __future__ import annotations
 
+import os
 from typing import Any
 
 try:
@@ -72,10 +73,36 @@ def tool_webfetch(url: str, prompt: str | None = None) -> str:
 
 
 def tool_websearch(query: str) -> str:
-    """Search the web using DuckDuckGo HTML."""
+    """Search the web using Tavily API (preferred) or DuckDuckGo HTML (fallback)."""
     if not HAS_REQUESTS:
         return "WebSearch requires the 'requests' library. Install with: pip install requests"
 
+    # Try Tavily first (better results, proper API)
+    tavily_key = os.environ.get("TAVILY_API_KEY")
+    if tavily_key:
+        try:
+            import urllib.parse
+            import json as json_module
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://api.tavily.com/search?api_key={tavily_key}&query={encoded_query}&max_results=10"
+            resp = requests.get(url, timeout=30, headers={
+                "User-Agent": "Draguniteus/0.1.0"
+            })
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("results", [])
+                if results:
+                    lines = ["[Web Search Results (Tavily)]"]
+                    for r in results[:10]:
+                        title = r.get("title", "No title")
+                        url = r.get("url", "")
+                        snippet = r.get("content", "")[:200]
+                        lines.append(f"- {title}\n  {url}\n  {snippet}")
+                    return "\n".join(lines)
+        except Exception:
+            pass  # Fall back to DuckDuckGo
+
+    # Fallback to DuckDuckGo HTML
     try:
         import urllib.parse
 

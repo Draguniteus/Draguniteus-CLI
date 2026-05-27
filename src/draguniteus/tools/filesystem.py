@@ -129,6 +129,33 @@ FILESYSTEM_TOOLS: list[dict[str, Any]] = [
         }
     },
     {
+        "name": "MultiEdit",
+        "description": "Make multiple targeted edits to a single file in one pass. " +
+                       "Use when you need to apply several changes to the same file efficiently.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the file to edit."
+                },
+                "old_new_pairs": {
+                    "type": "array",
+                    "description": "List of {old_string, new_string} replacement pairs. Applied in order.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_string": {"type": "string", "description": "Text to find and replace."},
+                            "new_string": {"type": "string", "description": "Replacement text."}
+                        },
+                        "required": ["old_string", "new_string"]
+                    }
+                }
+            },
+            "required": ["file_path", "old_new_pairs"]
+        }
+    },
+    {
         "name": "Bash",
         "description": "Execute a shell command. Returns stdout + stderr. " +
                        "Use for running tests, builds, git commands, linters, etc.",
@@ -235,7 +262,57 @@ def tool_edit(file_path: str, old_string: str, new_string: str) -> str:
     with open(path, "w", encoding="utf-8") as f:
         f.write(new_content)
 
+    # Track edit for undo (import here to avoid circular imports)
+    try:
+        from draguniteus.cli import _pending_edits
+        import time
+        _pending_edits.append({
+            "file": str(path),
+            "original": original,
+            "new": new_content,
+            "old_string": old_string,
+            "new_string": new_string,
+            "timestamp": time.time(),
+        })
+        # Keep only last 10 edits for undo
+        if len(_pending_edits) > 10:
+            _pending_edits.pop(0)
+    except Exception:
+        pass
+
     return f"ok — edited {file_path}"
+
+
+def tool_multi_edit(file_path: str, old_new_pairs: list[dict]) -> str:
+    """Make multiple targeted edits to a single file in sequence.
+
+    Each pair in old_new_pairs has {old_string, new_string}.
+    All replacements are applied in order to a single read of the file.
+    """
+    path = _normalize_path(file_path)
+    if not path.exists():
+        return f"Error: File not found: {file_path}"
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            original = f.read()
+    except Exception as e:
+        return f"Error reading {file_path}: {e}"
+
+    content = original
+    for pair in old_new_pairs:
+        old_string = pair.get("old_string", "")
+        new_string = pair.get("new_string", "")
+        if old_string not in content:
+            return f"Error: old_string not found in {file_path}: {repr(old_string[:50])}"
+        content = content.replace(old_string, new_string, 1)
+
+    try:
+        path.write_text(content, encoding="utf-8")
+    except Exception as e:
+        return f"Error writing {file_path}: {e}"
+
+    return f"ok — applied {len(old_new_pairs)} edits to {file_path}"
 
 
 def tool_glob(pattern: str, path: str | None = None) -> str:

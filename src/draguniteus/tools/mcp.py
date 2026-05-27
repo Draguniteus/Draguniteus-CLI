@@ -25,9 +25,11 @@ class MCPClient:
 
     def _load_config(self) -> None:
         """Load MCP server definitions from config."""
+        from draguniteus.config import Config
         cfg = Config()
-        mcp_servers = cfg._raw.get("mcp_servers", {})
-        for name, conf in mcp_servers.items():
+        # Accept both 'mcpServers' (Claude Code style) and 'mcp_servers' keys
+        servers = cfg.mcp_servers
+        for name, conf in servers.items():
             self.servers[name] = conf
 
     def add_server(
@@ -150,6 +152,27 @@ class MCPClient:
         # Clean up initialized state so server can be restarted
         self._initialized = getattr(self, '_initialized', set())
         self._initialized.discard(name)
+
+    def get_status(self, server_name: str) -> str:
+        """Get the connection status of an MCP server.
+
+        Returns one of: 'stopped', 'running', 'initialized', 'failed'
+        """
+        with self._lock:
+            if server_name not in self._processes:
+                return "stopped"
+        # Server process exists — check if it's still alive
+        proc = self._processes[server_name]
+        if proc.poll() is not None:
+            return "failed"
+        initialized = getattr(self, '_initialized', set())
+        if server_name in initialized:
+            return "initialized"
+        return "running"
+
+    def get_all_statuses(self) -> dict[str, str]:
+        """Get status of all configured servers."""
+        return {name: self.get_status(name) for name in self.servers}
 
     def stop_all(self) -> None:
         """Stop all MCP server processes."""

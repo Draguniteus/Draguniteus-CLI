@@ -115,3 +115,15 @@ class SemanticGraph:
         if node.relationships:
             parts.append(f"\nRelated: {', '.join(node.relationships)}")
         return "\n".join(parts)
+
+
+# Singleton per project
+_semantic_graph_instances: dict[str, SemanticGraph] = {}
+
+
+def _get_semantic_graph(project_path: Path | None = None) -> SemanticGraph:
+    """Get the SemanticGraph singleton for a project."""
+    proj = str((project_path or Path.cwd()).absolute())
+    if proj not in _semantic_graph_instances:
+        _semantic_graph_instances[proj] = SemanticGraph(project_path)
+    return _semantic_graph_instances[proj]

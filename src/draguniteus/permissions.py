@@ -267,6 +267,26 @@ class PermissionStore:
         key = f"{tool}:{detail[:80]}"
         self._session_approved[key] = False
 
+    def add_rule(self, tool: str, pattern: str, action: str) -> None:
+        """Add a permanent rule (saved to permissions.json)."""
+        self._rules.append(Permission(tool, pattern, action))
+
+    def save(self) -> None:
+        """Persist current rules to permissions.json."""
+        from draguniteus.config import DEFAULT_CONFIG_DIR
+        DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        pf = self.default_permissions_file()
+        rules_data = [
+            {"tool": r.tool, "pattern": r.pattern, "action": r.action}
+            for r in self._rules
+            if r.tool != "*"  # Don't persist wildcard catch-all rules
+        ]
+        try:
+            with open(pf, "w", encoding="utf-8") as f:
+                json.dump(rules_data, f, indent=2)
+        except Exception:
+            pass
+
     @staticmethod
     def default_permissions_file() -> Path:
         """Return path to default permissions file."""

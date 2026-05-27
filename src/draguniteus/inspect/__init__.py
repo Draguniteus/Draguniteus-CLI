@@ -68,13 +68,15 @@ def _collect_session() -> dict[str, Any]:
     from draguniteus.session import SessionStore
     try:
         store = SessionStore()
-        sessions = list(store._sessions.keys())[-5:]
+        # _sessions is a list[Session], get last 5 session IDs
+        recent = store._sessions[-5:] if len(store._sessions) > 5 else store._sessions
+        recent_ids = [s.id for s in recent]
         return {
             "sessions_available": len(store._sessions),
-            "recent_session_ids": sessions,
+            "recent_session_ids": recent_ids,
         }
-    except Exception:
-        return {"error": "session store unavailable"}
+    except Exception as e:
+        return {"error": f"session store unavailable: {e}"}
 
 
 def _collect_tools() -> dict[str, Any]:
@@ -463,7 +465,20 @@ def run_doctor() -> dict[str, Any]:
         from draguniteus.tools.mcp import MCPClient
         client = MCPClient()
         if client.servers:
-            checks["mcp"] = f"[OK] {len(client.servers)} servers configured"
+            statuses = client.get_all_statuses()
+            lines = []
+            for name, conf in client.servers.items():
+                status = statuses.get(name, "unknown")
+                server_type = conf.get("type", "stdio")
+                if status == "initialized":
+                    lines.append(f"    [OK]  {name} ({server_type}) — running")
+                elif status == "running":
+                    lines.append(f"    [OK]  {name} ({server_type}) — started")
+                elif status == "failed":
+                    lines.append(f"    [FAIL] {name} ({server_type}) — failed")
+                else:
+                    lines.append(f"    [WARN] {name} ({server_type}) — stopped")
+            checks["mcp"] = "\n" + "\n".join(lines) if lines else "[WARN]  no servers configured"
         else:
             checks["mcp"] = "[WARN]  no servers configured"
     except Exception as e:

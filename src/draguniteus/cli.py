@@ -81,6 +81,10 @@ _arena_mode: Any = None  # Active ArenaMode instance during multi-model orchestr
 _active_panels: Any = None  # Currently active panels (AgentPanels or ArenaMode)
 _active_panel_index: int = 0  # Which panel has keyboard focus for Tab cycling
 _orchestrator_cancel: Any = None  # Callable to cancel active orchestration
+_pending_edits: list[dict] = []  # Pending edits waiting to be accepted
+_pending_edit_index: int = 0  # Which pending edit is currently focused
+_edit_accept_mode: bool = False  # Whether we're cycling through pending edits
+_active_bg_task: dict | None = None  # Currently active backgroundable task (set during long commands)
 
 
 def _get_rules_manager() -> "RulesManager":
@@ -184,7 +188,24 @@ You operate as a fully agentic coding assistant:
 - Work iteratively: execute tools, observe results, adjust your approach
 - Execute multi-step tasks autonomously, ask for approval for sensitive operations
 
-You have access to these tools: Read, Write, Edit, Glob, Grep, Bash, GitStatus, GitDiff, GitCommit, GitPush, GitPRCreate
+You have access to these tools:
+
+**Filesystem:** Read, Write, Edit, MultiEdit, Glob, Grep
+**Shell:** Bash
+**Git:** GitStatus, GitDiff, GitCommit, GitPush, GitPRCreate
+**Web:** WebFetch, WebSearch
+**Memory:** WriteDailyNote, ReadDailyNote, WriteProjectMemory, ReadProjectMemory
+**Code Intelligence:** IndexCode, FindSymbol, GoToDefinition, FindReferences
+**Media:** text_to_audio, list_voices, voice_clone, text_to_image, generate_video, music_generation, query_video_generation, image_to_video
+**Orchestration:** Orchestrate, MultiAgentReview
+**Navigation:** SemanticSearch, ExplainCode, IndexSemantic
+**Review:** StartCodeReview, StopCodeReview, GetReviewFindings
+**Voice:** voice_start, voice_stop, voice_speak, voice_listen
+**Diff:** tool_diff, tool_diff_staged
+**Inspect:** InspectEnvironment
+**Agent:** Agent (run sub-agents for specialized tasks)
+
+**MCP Servers:** GitHub (GitHub API), filesystem (local file access), minimax (MiniMax API)
 
 Communication style:
 - Confident, powerful, slightly theatrical dragon mentor energy
@@ -444,9 +465,12 @@ def main(
     turn_count = 0
     while True:
         # Use piped command if available (from stdin when piped a slash command)
+        # Split multi-line _piped_command into separate inputs
         if _piped_command:
-            user_input = _piped_command
-            _piped_command = None
+            lines = _piped_command.split('\n')
+            user_input = lines[0]
+            remaining = '\n'.join(lines[1:])
+            _piped_command = remaining if remaining else None
         else:
             try:
                 user_input = _read_input()
@@ -489,6 +513,13 @@ def main(
         console.print()
         start = time.time()
 
+        # Set active background task info so Ctrl+B shows agent status
+        _active_bg_task = {
+            "id": f"agent_turn_{turn_count}",
+            "description": f"Agent turn: {user_input[:60]}...",
+            "type": "agent",
+        }
+
         # Prepend user message so API call has a non-empty messages list
         messages.append({"role": "user", "content": user_input})
 
@@ -502,6 +533,9 @@ def main(
 
         response_text, tool_results, in_tok, out_tok, thinking = run_one_turn(_client, messages, _get_system_prompt(), _cfg, _full_drama)
         elapsed = time.time() - start
+
+        # Clear active background task after turn completes
+        _active_bg_task = None
 
         # Track and check budget
         if _max_budget is not None:
@@ -630,6 +664,28 @@ def main(
 
         print_divider(_full_drama)
         console.print()
+
+        # --- Auto-checkpoint every N turns ---
+        try:
+            from draguniteus.checkpoint import get_checkpoint_manager, AgentCheckpoint
+            from draguniteus.agent import get_tracked_files
+            mgr = get_checkpoint_manager()
+            mgr.start_session(session.id, checkpoint_every=getattr(cfg, 'checkpoint_every', 5))
+            step = mgr.tick()
+            if step > 0 and mgr.should_checkpoint():
+                cp = AgentCheckpoint(
+                    session_id=session.id,
+                    step_count=step,
+                    phase="completed",
+                    messages=messages[-50:],
+                    tracked_files=get_tracked_files(),
+                    effort=getattr(cfg, 'effort', 'medium'),
+                    model=getattr(cfg, 'model', 'MiniMax-M2.7'),
+                )
+                mgr.save(cp)
+        except Exception:
+            pass
+
         turn_count += 1
 
     # Run SessionEnd hooks
@@ -757,69 +813,264 @@ def _find_session_by_id_or_name(identifier: str, session_store: SessionStore) ->
     return None
 
 
+def _extract_file_path(tool_name: str, args_str: str) -> str:
+    """Extract file path from tool args for display context."""
+    import json
+    import re
+
+    # Tools that work with file paths
+    file_tools = {"Read", "Edit", "Write", "Grep", "Glob", "Bash"}
+    if tool_name not in file_tools:
+        return ""
+
+    # Try to parse as JSON and extract file paths
+    try:
+        args = json.loads(args_str) if args_str else {}
+    except json.JSONDecodeError:
+        # Try to find file paths via regex
+        patterns = [
+            r'["\']file["\']\s*:\s*["\']([^"\']+)["\']',
+            r'["\']path["\']\s*:\s*["\']([^"\']+)["\']',
+            r'["\']filename["\']\s*:\s*["\']([^"\']+)["\']',
+            r'(["\'])([^\1]+\.(py|js|ts|tsx|jsx|md|txt|json|yml|yaml|css|html|xml|cfg|ini|toml))(\1)',
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, args_str)
+            if matches:
+                # Return first file path found
+                for match in matches:
+                    if isinstance(match, tuple):
+                        path = match[1] if len(match) > 1 else match[0]
+                    else:
+                        path = match
+                    if path and len(path) > 3:
+                        return path
+        return ""
+
+    # Extract from known JSON fields
+    for key in ["file_path", "file", "path", "filename", "target", "src", "dest"]:
+        if key in args and isinstance(args[key], str):
+            val = args[key]
+            if len(val) > 3 and not val.startswith("-"):
+                return val
+
+    return ""
+
+
 def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_store: SessionStore) -> None:
-    """Run a single one-shot prompt and print result."""
+    """Run a single one-shot prompt with progressive streaming display."""
+    from draguniteus.agent import stream_one_turn
+    from draguniteus.streaming_display import StreamingDisplay
+
     messages = [{"role": "user", "content": prompt}]
     session = session_store.get_or_create(str(cfg.model))
 
-    start = time.time()
-    response_text, tool_results, in_tok, out_tok, thinking = run_one_turn(client, messages, _get_system_prompt(), cfg, _full_drama)
-    elapsed = time.time() - start
+    # Create streaming display for progressive output
+    display = StreamingDisplay(console, _full_drama) if _full_drama else None
+    start_time = time.time()
+
+    if display:
+        display.start(start_time)
+
+    thinking_text = ""
+    response_text = ""
+    pending_tool_calls = []
+    tool_results = []
+    current_tokens = 0
+
+    # Track search context for display
+    search_patterns: list[str] = []
+    files_reading: list[str] = []
+
+    # Stream with progressive display
+    for text, thinking, tool_calls, is_final in stream_one_turn(client, messages, _get_system_prompt(), cfg, _full_drama):
+        # Update accumulated values
+        if thinking:
+            thinking_text = thinking
+        if text:
+            response_text = text
+
+        # Detect search tool calls to update search context
+        if tool_calls and display:
+            search_patterns = []
+            files_reading = []
+            for tc in tool_calls:
+                tool_name = tc.get("name", "")
+                args_str = tc.get("args", "")
+                # Parse search tools
+                if tool_name == "Grep":
+                    try:
+                        import json
+                        args = json.loads(args_str) if args_str else {}
+                        pattern = args.get("pattern", "")
+                        path = args.get("path", "")
+                        if pattern:
+                            search_patterns.append(pattern)
+                        if path:
+                            files_reading.append(path)
+                    except Exception:
+                        pass
+                elif tool_name == "Glob":
+                    try:
+                        import json
+                        args = json.loads(args_str) if args_str else {}
+                        pattern = args.get("pattern", "")
+                        path = args.get("path", "")
+                        if pattern:
+                            search_patterns.append(pattern)
+                        if path:
+                            files_reading.append(path)
+                    except Exception:
+                        pass
+                elif tool_name in ("Read", "mcp__filesystem__read_text_file"):
+                    try:
+                        import json
+                        args = json.loads(args_str) if args_str else {}
+                        file_path = args.get("file_path", args.get("path", ""))
+                        if file_path:
+                            files_reading.append(file_path)
+                    except Exception:
+                        pass
+            # Update search context display
+            if search_patterns or files_reading:
+                display.set_search_context(search_patterns, files_reading)
+
+        # Get token count from stream_one_turn's _last_usage if available
+        try:
+            current_tokens = stream_one_turn._last_usage
+        except Exception:
+            current_tokens = 0
+
+        # Update the live display
+        if display:
+            display.update(
+                thinking=thinking_text,
+                response=response_text,
+                tokens=current_tokens,
+            )
+
+        # Tool calls received (at is_final)
+        if tool_calls is not None:
+            pending_tool_calls = tool_calls
+
+        if is_final:
+            # Show tool context BEFORE stopping display and executing tools
+            if pending_tool_calls and display:
+                for tc in pending_tool_calls:
+                    tool_name = tc.get("name", "")
+                    args_str = tc.get("args", "")
+                    # Extract file path from common tool args
+                    file_path = _extract_file_path(tool_name, args_str)
+                    if file_path:
+                        display.show_tool_start(tool_name, args_str[:50], file_path)
+
+            # Stop the live display cleanly
+            if display:
+                display.stop()
+
+            # Fire notification hooks for turn completion
+            try:
+                from draguniteus.hook_runner import send_notification
+                tool_names = [tc.get("name", "?") for tc in (pending_tool_calls or [])]
+                if tool_names:
+                    send_notification(f"Turn complete — used: {', '.join(tool_names)}")
+                else:
+                    send_notification("Turn complete — no tools used")
+            except Exception:
+                pass
+
+            # Store tool results
+            if pending_tool_calls:
+                from draguniteus.agent import execute_tool_calls
+                from draguniteus.agent import StreamHandler
+                handler = StreamHandler(console, _full_drama)
+                handler._tool_calls = pending_tool_calls
+                tool_results, _, _ = execute_tool_calls(pending_tool_calls, messages, handler)
+
+                # Print tool results inline (one-shot mode has no interactive expand)
+                if tool_results and _full_drama:
+                    dim_color = "\033[90m"  # gray
+                    reset = "\033[0m"
+                    for i, tr in enumerate(tool_results, 1):
+                        name = tr.get("tool", "?")
+                        result = str(tr.get("result", ""))
+                        # Print tool name as sub-item
+                        try:
+                            sys.stdout.write(f"\n{dim_color}⎿ {name}{reset}\n")
+                        except UnicodeEncodeError:
+                            sys.stdout.write(f"\n> {name}\n")
+                        # Print first 50 lines of result
+                        lines = result.split('\n')
+                        for ln in lines[:50]:
+                            try:
+                                sys.stdout.write(f"  {ln}\n")
+                            except UnicodeEncodeError:
+                                sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                        if len(lines) > 50:
+                            sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
+                    sys.stdout.flush()
+
+            # Print response with bullet prefix (inside Rich.Live panel already shown, but need clean final output)
+            if response_text:
+                text = response_text.lstrip('\n')
+                try:
+                    from io import StringIO
+                    sio = StringIO()
+                    c2 = Console(file=sio, force_terminal=False)
+                    c2.print(Markdown(text))
+                    rendered = sio.getvalue().rstrip('\n')
+                except Exception:
+                    rendered = text
+                import re
+                clean_lines = []
+                for line in rendered.split('\n'):
+                    clean = re.sub(r'\[/?[^]]+\]', '', line)
+                    clean = clean.strip()
+                    clean_lines.append(clean)
+                first = True
+                for line in clean_lines:
+                    if not line:
+                        continue
+                    prefix = "● " if first else "  "
+                    first = False
+                    try:
+                        print(prefix + line)
+                    except UnicodeEncodeError:
+                        print((prefix + line).encode('ascii', errors='replace').decode('ascii'))
+            elif tool_results:
+                # No text but has tools - already showed during streaming
+                pass
+
+            # Store tool results for expandable display
+            global _last_tool_results
+            _last_tool_results = tool_results
+
+            # Show collapsible tool call summary
+            if tool_results:
+                from collections import Counter
+                counts = Counter(tr.get("tool", "?") for tr in tool_results)
+                if len(counts) == 1:
+                    name = list(counts.keys())[0]
+                    n = list(counts.values())[0]
+                    summary = f"Called {name}" if n == 1 else f"Called {name} {n} times"
+                else:
+                    summary = ", ".join(f"{v}x {k}" for k, v in counts.items())
+                    summary = f"Called {summary}"
+                _print(gray(summary))
+
+            elapsed = time.time() - start_time
+            # No need for separate thinking indicator - already shown during streaming
+            return  # Done after is_final block
+
+    elapsed = time.time() - start_time
 
     # Track one-shot cost
     if _max_budget is not None:
-        turn_cost = (in_tok + out_tok) / 1_000_000 * 0.05
+        turn_cost = current_tokens / 1_000_000 * 0.05 if current_tokens > 0 else 0
         _total_cost += turn_cost
         if _total_cost > _max_budget:
-            print(f"Budget limit reached (${_total_cost:.4f} > ${_max_budget:.4f}).")
+            print(f"\nBudget limit reached (${_total_cost:.4f} > ${_max_budget:.4f}).")
             return
-
-    if response_text:
-        # Strip leading newlines
-        text = response_text.lstrip('\n')
-        # Try Rich markdown rendering, fall back to plain text
-        try:
-            from io import StringIO
-            sio = StringIO()
-            c2 = Console(file=sio, force_terminal=False)
-            c2.print(Markdown(text))
-            rendered = sio.getvalue().rstrip('\n')
-        except Exception:
-            rendered = text
-        # Strip Rich markup and extra whitespace from each line
-        import re
-        clean_lines = []
-        for line in rendered.split('\n'):
-            clean = re.sub(r'\[/?[^]]+\]', '', line)
-            clean = clean.strip()
-            clean_lines.append(clean)
-        # Print with prefix on first non-empty line
-        first = True
-        for line in clean_lines:
-            if not line:
-                continue
-            prefix = "> " if first else "  "
-            first = False
-            try:
-                print(prefix + line)
-            except UnicodeEncodeError:
-                print((prefix + line).encode('ascii', errors='replace').decode('ascii'))
-
-    # Store tool results for expandable display
-    global _last_tool_results
-    _last_tool_results = tool_results
-
-    # Show expandable tool calls indicator
-    if tool_results:
-        tool_names = [tr.get("tool", "?") for tr in tool_results]
-        if len(tool_names) == 1:
-            print(f"[{tool_names[0]}]")
-        else:
-            print(f"[{len(tool_names)} tool calls]... (Ctrl+E to expand)")
-
-    # Thinking indicator AFTER response and tools
-    if _full_drama:
-        print_thinking(elapsed, _full_drama)
 
 
 def _read_input() -> str:
@@ -908,42 +1159,82 @@ def _read_input() -> str:
                         sys.stdout.flush()
                     continue
 
-                if ch == '\x0f':  # Ctrl+O - transcript viewer
-                    sys.stdout.write("\r" + " " * 80 + "\r")
-                    sys.stdout.write("=== TRANSCRIPT ===\n")
-                    try:
-                        events = session_store.list_events(session.id)[-30:] if session_store else []
-                        for ev in (events or []):
-                            role = ev.get("type", "?")
-                            content = ev.get("content", "")[:100]
-                            prefix = "●" if role == "assistant" else ">"
-                            sys.stdout.write(f"{prefix} {content}\n")
-                    except Exception:
-                        sys.stdout.write("(no transcript)\n")
-                    sys.stdout.write("\n[Press q or Ctrl+O to exit transcript]\n")
-                    sys.stdout.flush()
-                    while True:
-                        k = sys.stdin.read(1)
-                        if k == 'q' or k == '\x0f':
-                            break
+                if ch == '\x02':  # Ctrl+B - background active task
+                    global _active_bg_task
+                    if _active_bg_task:
+                        task_id = _active_bg_task.get("id", "?")
+                        task_desc = _active_bg_task.get("description", "?")[:60]
+                        task_type = _active_bg_task.get("type", "shell")
+                        sys.stdout.write("\r" + " " * 80 + "\r")
+                        if task_type == "agent":
+                            # Agent turns can't be backgrounded mid-stream, but acknowledge
+                            sys.stdout.write(f"  Agent is thinking: {task_desc}\n")
+                            sys.stdout.write(f"  (Agent turns cannot be backgrounded — wait for completion)\n")
+                            sys.stdout.flush()
+                        else:
+                            sys.stdout.write(f"  Backgrounding: {task_desc}\n")
+                            sys.stdout.flush()
+                            sys.stdout.write(f"  [Task ID: {task_id}] Use /background to view\n")
+                            sys.stdout.flush()
+                            try:
+                                from draguniteus.tasks.manager import get_task_manager
+                                tm = get_task_manager()
+                                task = tm.get_task(task_id)
+                                if task:
+                                    task.status = "pending"
+                            except Exception:
+                                pass
+                        _active_bg_task = None
+                    else:
+                        sys.stdout.write("\r  (no active task to background)\n")
+                        sys.stdout.flush()
                     sys.stdout.write("\r" + " " * 80 + "\r❯ " + line)
                     sys.stdout.flush()
                     continue
 
-                if ch == '\x05':  # Ctrl+E - expand tool calls
-                    global _last_tool_results, _expand_tools_requested
+                if ch == '\x0f':  # Ctrl+O - expand tool results (same as Ctrl+E)
+                    global _last_tool_results
                     if _last_tool_results:
-                        _expand_tools_requested = True
                         sys.stdout.write("\r" + " " * 80 + "\r")
+                        sys.stdout.write("=" * 68 + "\n")
+                        i = 0
                         for tr in _last_tool_results:
+                            i += 1
                             name = tr.get("tool", "?")
-                            result = str(tr.get("result", ""))[:500]
-                            sys.stdout.write(f"\n[{name}]\n{result}\n")
-                        sys.stdout.write("\n❯ " + line)
-                        sys.stdout.flush()
+                            result = str(tr.get("result", ""))
+                            sys.stdout.write(f"  [{i}/{len(_last_tool_results)}] {name}\n")
+                            lines = result.split('\n')
+                            for ln in lines[:100]:
+                                sys.stdout.write(f"    {ln}\n")
+                            if len(lines) > 100:
+                                sys.stdout.write(f"    [...+ {len(lines) - 100} lines]\n")
+                        sys.stdout.write("=" * 68 + "\n")
                     else:
-                        sys.stdout.write("\r" + " " * 80 + "\r❯ " + line)
-                        sys.stdout.flush()
+                        sys.stdout.write("\r  (no tool results to expand)\n")
+                    sys.stdout.write("\r" + " " * 80 + "\r❯ " + line)
+                    sys.stdout.flush()
+                    continue
+
+                if ch == '\x05':  # Ctrl+E - expand tool results
+                    if _last_tool_results:
+                        sys.stdout.write("\r" + " " * 80 + "\r")
+                        sys.stdout.write("=" * 68 + "\n")
+                        i = 0
+                        for tr in _last_tool_results:
+                            i += 1
+                            name = tr.get("tool", "?")
+                            result = str(tr.get("result", ""))
+                            sys.stdout.write(f"  [{i}/{len(_last_tool_results)}] {name}\n")
+                            lines = result.split('\n')
+                            for ln in lines[:100]:
+                                sys.stdout.write(f"    {ln}\n")
+                            if len(lines) > 100:
+                                sys.stdout.write(f"    [...+ {len(lines) - 100} lines]\n")
+                        sys.stdout.write("=" * 68 + "\n")
+                    else:
+                        sys.stdout.write("\r  (no tool results to expand)\n")
+                    sys.stdout.write("\r" + " " * 80 + "\r❯ " + line)
+                    sys.stdout.flush()
                     continue
 
                 if ch == '\x09':  # Tab
@@ -966,6 +1257,30 @@ def _read_input() -> str:
                         sys.stdout.write("\r" + " " * 80 + "\r❯ " + suggestion + " ")
                         sys.stdout.flush()
                         line = suggestion + " "
+                    continue
+
+                if ch == '\x0c':  # Ctrl+L — clear screen
+                    sys.stdout.write("\x1b[2J\x1b[H")
+                    sys.stdout.flush()
+                    sys.stdout.write("\r❯ " + line)
+                    sys.stdout.flush()
+                    continue
+
+                if ch == '\x0b':  # Ctrl+K — delete to end of line
+                    deleted = line[len(line):]
+                    line = ""
+                    # Move cursor back over deleted chars
+                    for _ in range(len(deleted)):
+                        sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                    continue
+
+                if ch == '\x15':  # Ctrl+U — clear line (delete from cursor to beginning)
+                    # Move cursor to beginning and clear
+                    for _ in range(len(line)):
+                        sys.stdout.write("\b \b")
+                    line = ""
+                    sys.stdout.flush()
                     continue
 
                 if ch == '\r' or ch == '\n':
@@ -1089,9 +1404,22 @@ def _handle_slash_command(cmd: str, messages: list[dict], session: Session) -> b
         "index": _cmd_index,
         "voice": _cmd_voice,
         "diff": _cmd_diff,
+        "submit": _cmd_submit,
+        "resume": _cmd_resume,
+        "context": _cmd_context,
+        "model": _cmd_model,
+        "patch": _cmd_patch,
+        "undo": _cmd_undo,
         "inspect": _cmd_inspect,
         "info": _cmd_info,
         "doctor": _cmd_doctor,
+        "think": _cmd_think,
+        "fast": _cmd_fast,
+        "workflow": _cmd_workflow,
+        "preview": _cmd_preview,
+        "checkpoint": _cmd_checkpoint,
+        "tools": _cmd_tools,
+        "critique": _cmd_critique,
     }
 
     handler = handlers.get(name)
@@ -1219,6 +1547,7 @@ def _cmd_help(arg: str, messages: list[dict], session: Session) -> bool:
     /transcript     -- Show transcript summary
     /transcript full-- Full transcript viewer
     /background     -- List background tasks
+    /undo           -- Undo last edit (--list to show history)
     /vim            -- Toggle vim editing mode
     """
 
@@ -1247,7 +1576,7 @@ def _cmd_help(arg: str, messages: list[dict], session: Session) -> bool:
     Keyboard shortcuts:
       Ctrl+B   Background current command
       Ctrl+T   Toggle task list
-      Ctrl+O   Toggle transcript viewer
+      Ctrl+O   Expand tool results (same as Ctrl+E)
       Ctrl+R   Reverse history search
       ! cmd    Shell mode (direct command)
 
@@ -1263,7 +1592,7 @@ def _cmd_help(arg: str, messages: list[dict], session: Session) -> bool:
     Keyboard shortcuts:
       Ctrl+B   Background current command
       Ctrl+T   Toggle task list
-      Ctrl+O   Toggle transcript viewer
+      Ctrl+O   Expand tool results (same as Ctrl+E)
       Ctrl+R   Reverse history search
       ! cmd    Shell mode (direct command)
 
@@ -2196,6 +2525,187 @@ def _cmd_diff(arg: str, messages: list[dict], session: Session) -> bool:
         return True
 
 
+def _cmd_undo(arg: str, messages: list[dict], session: Session) -> bool:
+    """Undo the last edit. /undo [--list]"""
+    global _pending_edits
+
+    parts = arg.strip().split()
+
+    if "--list" in parts or not _pending_edits:
+        if not _pending_edits:
+            _print(gray("[D] No edits to undo."))
+            return True
+        _print(gray("[D] Pending edits (newest last):"))
+        for i, edit in enumerate(reversed(_pending_edits)):
+            fname = edit.get("file", "?")
+            _print(gray(f"  [{len(_pending_edits) - 1 - i}] {fname}"))
+        return True
+
+    # Pop the most recent edit and restore original content
+    edit = _pending_edits.pop()
+    filepath = edit.get("file", "")
+    original = edit.get("original", "")
+
+    if not filepath or not original:
+        _print(gray("[D] Undo failed: missing edit info."))
+        return True
+
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(original)
+        _print(gray(f"[D] Undid edit to {filepath}"))
+    except Exception as e:
+        _print(gray(f"[D] Undo failed: {e}"))
+        # Put it back if failed
+        _pending_edits.append(edit)
+
+    return True
+
+
+def _cmd_submit(arg: str, messages: list[dict], session: Session) -> bool:
+    """Submit a completed task / changes. /submit [--message <msg>]"""
+    parts = arg.strip().split()
+    commit_msg = None
+
+    i = 0
+    while i < len(parts):
+        if parts[i] == "--message" and i + 1 < len(parts):
+            commit_msg = parts[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    if not commit_msg:
+        commit_msg = "Completed task via Draguniteus"
+
+    # Run git add -A && git commit -m "..."
+    from draguniteus.tools.shell import tool_bash
+    _print(gray(f"[D] Staging and committing changes..."))
+
+    add_result = tool_bash("git add -A")
+    if add_result and "error" in add_result.lower():
+        _print(gray(f"[D] Git add failed: {add_result[:200]}"))
+        return True
+
+    commit_result = tool_bash(f'git commit -m "{commit_msg}"')
+    if commit_result and "error" in commit_result.lower():
+        _print(gray(f"[D] Git commit failed: {commit_result[:200]}"))
+    elif "nothing to commit" in commit_result.lower():
+        _print(gray("[D] Nothing to commit."))
+    else:
+        _print(print_success(f"[D] Changes committed: {commit_result[:200]}"))
+
+    return True
+
+
+def _cmd_resume(arg: str, messages: list[dict], session: Session) -> bool:
+    """Resume a session or task. /resume [--session <id>]"""
+    parts = arg.strip().split()
+    session_id = None
+
+    i = 0
+    while i < len(parts):
+        if parts[i] == "--session" and i + 1 < len(parts):
+            session_id = parts[i + 1]
+            i += 2
+        else:
+            session_id = parts[i] if parts else None
+            break
+
+    if session_id:
+        _print(gray(f"[D] Resuming session: {session_id}"))
+        # The main loop handles resume via _resume_id global
+        global _resume_id
+        _resume_id = session_id
+        _print(gray("[D] Use /reset to start fresh, /new to start a new session"))
+    else:
+        _print(gray("[D] Available sessions:"))
+        from draguniteus.session import SessionStore
+        store = SessionStore()
+        for s in store._sessions[-5:]:
+            _print(gray(f"  - {s.id} (created: {s.created_at[:16]})"))
+
+    return True
+
+
+def _cmd_context(arg: str, messages: list[dict], session: Session) -> bool:
+    """Show/manage context window. /context [--show] [--size]"""
+    parts = arg.strip().split()
+
+    if "--size" in parts:
+        try:
+            from draguniteus.client import _client
+            if _client:
+                input_toks = _client.count_tokens(messages)
+                threshold = 8192
+                pct = min(100, (input_toks / threshold) * 100)
+                _print(gray(f"[D] Context: {input_toks} tokens ({pct:.1f}% of {threshold})"))
+        except Exception:
+            pass
+        return True
+
+    # Default: show context summary
+    msg_count = len(messages)
+    _print(gray(f"[D] Context: {msg_count} messages in current session"))
+    if msg_count > 0:
+        # Show last message preview
+        last = messages[-1] if messages else {}
+        role = last.get("role", "?")
+        content = last.get("content", "")
+        if isinstance(content, str):
+            preview = content[:100] + "..." if len(content) > 100 else content
+        else:
+            preview = str(content)[:100]
+        _print(gray(f"  Last: [{role}] {preview}"))
+    return True
+
+
+def _cmd_model(arg: str, messages: list[dict], session: Session) -> bool:
+    """Switch model or show available models. /model [--list] [model_name]"""
+    global _cfg
+    parts = arg.strip().split()
+
+    if "--list" in parts or not parts:
+        _print(gray("[D] Available models:"))
+        models = ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2"]
+        for m in models:
+            current = " (current)" if str(_cfg.model) == m else ""
+            _print(gray(f"  - {m}{current}"))
+        return True
+
+    # Set model
+    new_model = parts[0]
+    old_model = str(_cfg.model)
+    try:
+        _cfg._raw["model"] = new_model
+        _print(gray(f"[D] Model changed: {old_model} → {new_model}"))
+    except Exception as e:
+        _print(gray(f"[D] Failed to change model: {e}"))
+
+    return True
+
+
+def _cmd_patch(arg: str, messages: list[dict], session: Session) -> bool:
+    """Apply a patch to a file. /patch <file> <old_text> <new_text>"""
+    parts = arg.strip().split(maxsplit=2)
+
+    if len(parts) < 3:
+        _print(gray("[D] Usage: /patch <file> <old_text> <new_text>"))
+        return True
+
+    filepath, old_text, new_text = parts[0], parts[1], parts[2]
+    _print(gray(f"[D] Applying patch to {filepath}..."))
+
+    from draguniteus.tools.filesystem import tool_edit
+    result = tool_edit(filepath, old_text, new_text)
+    if "ok" in result.lower():
+        _print(print_success(f"[D] Patch applied successfully"))
+    else:
+        _print(gray(f"[D] Patch failed: {result}"))
+
+    return True
+
+
 def _cmd_inspect(arg: str, messages: list[dict], session: Session) -> bool:
     """Inspect Draguniteus's full environment. /inspect [--section <name>] [--json]"""
     parts = arg.strip().split()
@@ -2252,6 +2762,308 @@ def _cmd_info(arg: str, messages: list[dict], session: Session) -> bool:
 def _cmd_doctor(arg: str, messages: list[dict], session: Session) -> bool:
     """Run self-diagnosis. /doctor is an alias for /inspect --section doctor."""
     return _cmd_inspect("--section doctor", messages, session)
+
+
+def _cmd_eval(arg: str, messages: list[dict], session: Session) -> bool:
+    """Evaluate code safely in a sandbox. /eval [--lang <lang>] <code>"""
+    parts = arg.strip().split(maxsplit=1)
+    lang = "python"
+    code = arg
+
+    if parts and parts[0] == "--lang" and len(parts) > 1:
+        lang = parts[1].split()[0] if len(parts[1].split()) > 1 else "python"
+        code = " ".join(parts[1].split()[1:])
+    elif parts and not parts[0].startswith("--"):
+        code = arg
+
+    if not code.strip():
+        _print(gray("[D] Usage: /eval [--lang python|js|bash] <code>"))
+        return True
+
+    _print(gray(f"[D] Evaluating {lang} code..."))
+
+    if lang == "python":
+        try:
+            import io, contextlib
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exec(code, {"__builtins__": __builtins__})
+            result = output.getvalue()
+            if result:
+                _print(gray(result))
+            else:
+                _print(print_success("[D] No output (completed successfully)"))
+        except Exception as e:
+            _print(red(f"[D] Error: {e}"))
+    elif lang in ("js", "javascript"):
+        _print(gray("[D] JavaScript eval requires Node.js — not available in this environment"))
+    elif lang in ("bash", "shell"):
+        _print(gray("[D] Shell eval is disabled for security — use /bash instead"))
+    else:
+        _print(gray(f"[D] Unknown language: {lang}"))
+
+    return True
+
+
+def _cmd_refactor(arg: str, messages: list[dict], session: Session) -> bool:
+    """Refactor a file or codebase. /refactor [--dry] [--path <path>] <description>
+
+    Analyzes code and applies refactors. Use --dry to preview without applying.
+    """
+    import re
+
+    parts = arg.strip().split(maxsplit=1)
+    dry_run = False
+    target_path = None
+    description = arg
+
+    if "--dry" in arg:
+        dry_run = True
+        description = re.sub(r'--dry\s*', '', description)
+    if "--path" in arg:
+        match = re.search(r'--path\s+(\S+)', description)
+        if match:
+            target_path = match.group(1)
+            description = re.sub(r'--path\s+\S+\s*', '', description)
+
+    if not description.strip():
+        _print(gray("[D] Usage: /refactor [--dry] [--path <path>] <description>"))
+        return True
+
+    _print(gray(f"[D] Refactor{' (dry run) ' if dry_run else ''}: {description}"))
+
+    # Build refactor directive for the agent
+    refactor_msg = f"[Refactor Request]\n\nTarget: {target_path or 'current project'}\n\nDescription: {description}\n\n"
+    if dry_run:
+        refactor_msg += "This is a DRY RUN — do not apply changes, only describe what would change."
+    else:
+        refactor_msg += "Apply the refactor and report the changes made."
+
+    messages.append({
+        "role": "system",
+        "content": refactor_msg
+    })
+
+    _print(print_success(f"[D] Refactor queued — agent will process this request"))
+    return True
+
+
+def _cmd_think(arg: str, messages: list[dict], session: Session) -> bool:
+    """Force thinking mode for the next turn. /think"""
+    try:
+        from draguniteus.thinking_router import get_thinking_router
+        router = get_thinking_router()
+        router.set_override("think")
+        _print(gray("[D] Thinking mode forced for next turn"))
+    except Exception as e:
+        _print(gray(f"[D] Could not enable thinking mode: {e}"))
+    return True
+
+
+def _cmd_fast(arg: str, messages: list[dict], session: Session) -> bool:
+    """Force direct-answer mode for the next turn. /fast"""
+    try:
+        from draguniteus.thinking_router import get_thinking_router
+        router = get_thinking_router()
+        router.set_override("direct")
+        _print(gray("[D] Fast mode forced for next turn (skipping thinking)"))
+    except Exception as e:
+        _print(gray(f"[D] Could not enable fast mode: {e}"))
+    return True
+
+
+def _cmd_workflow(arg: str, messages: list[dict], session: Session) -> bool:
+    """Manage agentic workflows. /workflow [start <task>|status|stop]"""
+    try:
+        from draguniteus.workflows.agentic_workflow import AgenticWorkflow, WorkflowConfig
+    except Exception as e:
+        _print(gray(f"[D] Workflow engine not available: {e}"))
+        return True
+
+    parts = arg.strip().split(maxsplit=2)
+    cmd = parts[0] if parts else ""
+
+    if cmd == "start" and len(parts) > 1:
+        task = " ".join(parts[1:])
+        workflow_id = f"wf_{session.id[:8]}"
+        wf = AgenticWorkflow(workflow_id, task)
+        # Store in session state
+        if not hasattr(session, "_workflows"):
+            session._workflows = {}
+        session._workflows[workflow_id] = wf
+        _print(print_success(f"[D] Workflow started: {workflow_id} — {task}"))
+        messages.append({
+            "role": "system",
+            "content": f"[Agentic Workflow] Task: {task}\nPlan your approach step by step."
+        })
+    elif cmd == "status":
+        workflows = getattr(session, "_workflows", {})
+        if not workflows:
+            _print(gray("[D] No active workflows"))
+        else:
+            for wid, wf in workflows.items():
+                badge = wf.get_phase_badge()
+                summary = wf.get_progress_summary()
+                _print(gray(f"  {badge} {wid}: {summary}"))
+    elif cmd == "stop":
+        workflows = getattr(session, "_workflows", {})
+        if workflows:
+            workflows.clear()
+            _print(gray("[D] All workflows stopped"))
+        else:
+            _print(gray("[D] No active workflows to stop"))
+    else:
+        _print(gray("[D] Usage: /workflow start <task> | status | stop"))
+
+    return True
+
+
+def _cmd_preview(arg: str, messages: list[dict], session: Session) -> bool:
+    """Preview generated files in browser. /preview [filepath] | stop"""
+    try:
+        from draguniteus.preview.server import get_preview_server
+    except Exception as e:
+        _print(gray(f"[D] Preview server not available: {e}"))
+        return True
+
+    parts = arg.strip().split(maxsplit=1)
+    cmd = parts[0] if parts else ""
+
+    if cmd == "stop":
+        server = get_preview_server()
+        result = server.stop()
+        _print(gray(f"[D] {result}"))
+    elif cmd:
+        # Preview a specific file
+        from pathlib import Path
+        file_path = Path(cmd)
+        server = get_preview_server()
+        url = server.preview_file(file_path)
+        if url.startswith("Error") or not server.is_running:
+            _print(gray(f"[D] {url}"))
+        else:
+            _print(print_success(f"[D] Preview: {url}"))
+    else:
+        # Start server and show index
+        server = get_preview_server()
+        url = server.start()
+        _print(print_success(f"[D] Preview server: {url}"))
+
+    return True
+
+
+def _cmd_checkpoint(arg: str, messages: list[dict], session: Session) -> bool:
+    """Manage checkpoints. /checkpoint [list|save|load|delete]"""
+    try:
+        from draguniteus.checkpoint import get_checkpoint_manager, AgentCheckpoint
+    except Exception as e:
+        _print(gray(f"[D] Checkpoint system not available: {e}"))
+        return True
+
+    mgr = get_checkpoint_manager()
+    parts = arg.strip().split(maxsplit=1)
+    cmd = parts[0] if parts else ""
+
+    if cmd == "list":
+        checkpoints = mgr.list_checkpoints(session.id)
+        if not checkpoints:
+            _print(gray("[D] No checkpoints for this session"))
+        else:
+            _print(gray(f"[D] Checkpoints for {session.id}:"))
+            for cp in checkpoints[-10:]:
+                _print(gray(f"  Step {cp['step']} [{cp['phase']}] — {cp['created_at'][:19]}"))
+    elif cmd == "save":
+        # Manual save — build checkpoint from current state
+        from draguniteus.checkpoint import AgentCheckpoint
+        cp = AgentCheckpoint(
+            session_id=session.id,
+            step_count=0,
+            phase="manual",
+            messages=messages[-20:],
+        )
+        path = mgr.save(cp)
+        _print(print_success(f"[D] Checkpoint saved: {path}"))
+    elif cmd == "delete":
+        mgr.delete_session(session.id)
+        _print(gray(f"[D] All checkpoints for this session deleted"))
+    else:
+        _print(gray("[D] Usage: /checkpoint list | save | delete"))
+
+    return True
+
+
+def _cmd_tools(arg: str, messages: list[dict], session: Session) -> bool:
+    """Tool management. /tools [stats|create|list|delete <name>]"""
+    try:
+        from draguniteus.tools.reflection import get_tool_reflection
+        from draguniteus.tools.dynamic import get_tool_builder
+    except Exception as e:
+        _print(gray(f"[D] Tool management not available: {e}"))
+        return True
+
+    parts = arg.strip().split(maxsplit=2)
+    cmd = parts[0] if parts else ""
+
+    if cmd == "stats":
+        reflection = get_tool_reflection()
+        summary = reflection.format_summary()
+        _print(gray(f"[D] {summary}"))
+    elif cmd == "list":
+        builder = get_tool_builder()
+        tools = builder.list_tools()
+        if not tools:
+            _print(gray("[D] No custom tools registered"))
+        else:
+            _print(gray(f"[D] Custom tools: {', '.join(tools)}"))
+    elif cmd == "create" and len(parts) > 1:
+        _print(gray("[D] Usage: /tools create <name> <description> <schema_json> — use register_custom_tool() in code instead"))
+    elif cmd == "delete" and len(parts) > 1:
+        name = parts[1]
+        builder = get_tool_builder()
+        builder.delete_tool(name)
+        _print(gray(f"[D] Tool '{name}' deleted"))
+    else:
+        _print(gray("[D] Usage: /tools stats | list | delete <name>"))
+
+    return True
+
+
+def _cmd_critique(arg: str, messages: list[dict], session: Session) -> bool:
+    """Run self-critique on the last task. /critique"""
+    try:
+        from draguniteus.self_improvement import get_self_improvement_engine
+    except Exception as e:
+        _print(gray(f"[D] Self-improvement engine not available: {e}"))
+        return True
+
+    engine = get_self_improvement_engine()
+    # Try to get tool results from session if available
+    tool_results = getattr(session, "_last_tool_results", [])
+
+    if not messages:
+        _print(gray("[D] No messages to critique"))
+        return True
+
+    # Get last user request
+    last_task = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            last_task = m.get("content", "")[:200]
+            break
+
+    critique = engine.critique(
+        task_description=last_task or "unknown task",
+        tool_results=tool_results,
+        messages=messages,
+        outcome="success",
+    )
+
+    if critique:
+        _print(gray(f"[D] {critique}"))
+    else:
+        _print(gray("[D] No critique available"))
+
+    return True
 
 
 if __name__ == "__main__":

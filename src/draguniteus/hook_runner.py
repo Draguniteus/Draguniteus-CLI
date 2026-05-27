@@ -326,3 +326,17 @@ def get_hook_runner() -> HookRunner:
     if _hook_runner is None:
         _hook_runner = HookRunner()
     return _hook_runner
+
+
+def send_notification(message: str) -> None:
+    """Send a notification to the user, firing Notification hooks.
+
+    This should be called when:
+    - A background task completes
+    - A build or test finishes
+    - A long-running operation finishes
+    """
+    runner = get_hook_runner()
+    result = runner.run_notification(message)
+    # If a hook returned a block response, it will be in result
+    return result

@@ -1,4 +1,4 @@
-"""Memory management: project memory (DRAGUNITEUS.md), daily notes, long-term."""
+"""Memory management: project memory (DRAGUNITEUS.md), daily notes, long-term, vector."""
 from __future__ import annotations
 
 import time
@@ -50,10 +50,25 @@ class ProjectMemory:
 
 
 class MemoryManager:
-    """Orchestrates short-term (session), medium-term (daily), long-term (DRAGUNITEUS.md)."""
+    """Orchestrates short-term (session), medium-term (daily), long-term (DRAGUNITEUS.md).
+
+    Also provides access to ChromaDB-backed vector memory via the vector_memory property.
+    """
 
     def __init__(self):
         self.project_memory = ProjectMemory()
+        self._vector_memory = None
+
+    @property
+    def vector_memory(self):
+        """Lazy-init ChromaDB vector memory."""
+        if self._vector_memory is None:
+            try:
+                from draguniteus.memory.vector_store import get_vector_memory
+                self._vector_memory = get_vector_memory(Path.cwd())
+            except Exception:
+                self._vector_memory = None
+        return self._vector_memory
 
     def load_for_agent(self) -> str:
         """Return all relevant memory as a string for injection into system prompt."""
@@ -69,8 +84,59 @@ class MemoryManager:
         if daily:
             parts.append(f"## Today\n{daily}")
 
+        # Vector memory count (if available)
+        vm = self.vector_memory
+        if vm is not None:
+            try:
+                count = vm.count()
+                if count > 0:
+                    parts.append(f"## Vector Memory\n{count} memories indexed (use /memory search <query> to query)")
+            except Exception:
+                pass
+
         return "\n\n".join(parts) if parts else ""
 
+    def search_vector_memory(self, query: str, n_results: int = 5) -> list[dict[str, Any]]:
+        """Search the vector memory store."""
+        vm = self.vector_memory
+        if vm is None:
+            return []
+        try:
+            return vm.search(query, n_results=n_results)
+        except Exception:
+            return []
 
-# Global instance
-memory_manager = MemoryManager()
+    def add_to_vector_memory(
+        self,
+        content: str,
+        doc_type: str = "general",
+        path: str = "",
+        tags: list[str] | None = None,
+    ) -> str:
+        """Add content to vector memory. Returns doc ID."""
+        vm = self.vector_memory
+        if vm is None:
+            return ""
+        try:
+            return vm.add(content, doc_type=doc_type, path=path, tags=tags)
+        except Exception:
+            return ""
+
+
+# Module-level singleton accessor
+_memory_manager_instance: MemoryManager | None = None
+
+
+def _get_memory_manager_singleton() -> "MemoryManager":
+    global _memory_manager_instance
+    if _memory_manager_instance is None:
+        _memory_manager_instance = MemoryManager()
+    return _memory_manager_instance
+
+
+def _get_memory_manager() -> MemoryManager:
+    return _get_memory_manager_singleton()
+
+
+# Backward-compat global instance
+memory_manager = _get_memory_manager_singleton()

@@ -7,6 +7,7 @@ from typing import Any, Iterator
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.text import Text
 
 from draguniteus import client, config, theming
 from draguniteus.client import DraguniteusClient
@@ -60,7 +61,7 @@ def _get_hook_runner():
 class StreamHandler:
     """Accumulates streaming events and renders progressively via Rich."""
 
-    def __init__(self, console: Console, full_drama: bool = True):
+    def __init__(self, console: Console, full_drama: bool = True, on_tool_call: callable = None, on_tool_start: callable = None, on_tool_use_start: callable = None):
         self.console = console
         self.full_drama = full_drama
         self._text_parts: list[str] = []
@@ -71,6 +72,9 @@ class StreamHandler:
         self._output_tokens: int = 0
         self._text_size_bytes: int = 0  # Track accumulated size
         self._truncated: bool = False  # Set to True if output was truncated
+        self._on_tool_call = on_tool_call  # Callback when tool call completes (content_block_stop)
+        self._on_tool_start = on_tool_start  # Callback when tool starts (content_block_start)
+        self._on_tool_use_start = on_tool_use_start  # Callback when tool_use block starts with partial args
 
     def _append_text(self, text: str) -> None:
         """Append text with size limit enforcement."""
@@ -88,8 +92,6 @@ class StreamHandler:
 
     def handle_event(self, event: Any) -> str | None:
         """Process a streaming event. Returns any tool call to execute."""
-        import anthropic
-
         event_type = getattr(event, "type", None)
         if event_type is None:
             return None
@@ -103,6 +105,12 @@ class StreamHandler:
                     tool_name = getattr(block, "name", "Unknown")
                     self._current_tool = {"name": tool_name, "args": ""}
                     self._tool_calls.append(self._current_tool)
+                    # Immediately notify via callback when tool starts
+                    if self._on_tool_start and tool_name:
+                        self._on_tool_start(tool_name)
+                    # Separate callback for tool_use block start (fires before args accumulate)
+                    if self._on_tool_use_start and tool_name:
+                        self._on_tool_use_start(tool_name, "")
                 elif btype == "thinking":
                     self._thinking_parts = []
 
@@ -121,10 +129,19 @@ class StreamHandler:
                 thinking = getattr(delta, "thinking", "")
                 self._thinking_parts.append(thinking)
                 return None
+            elif dtype == "signature_delta":
+                # MiniMax uses signature_delta for thinking content
+                sig = getattr(delta, "signature", "")
+                if sig:
+                    self._thinking_parts.append(sig)
+                return None
             elif dtype == "input_json_delta":
                 arg_text = getattr(delta, "partial_json", "")
                 if self._current_tool is not None:
                     self._current_tool["args"] += arg_text
+                    # Notify of progressive args accumulation (for tool bullet update)
+                    if self._on_tool_use_start:
+                        self._on_tool_use_start(self._current_tool["name"], self._current_tool["args"])
                 return None
 
         # Content block stop
@@ -132,13 +149,15 @@ class StreamHandler:
             if self._current_tool:
                 tc = self._current_tool
                 self._current_tool = None
+                # Immediately notify via callback if registered
+                if self._on_tool_call and tc.get("name"):
+                    self._on_tool_call(tc)
                 return tc
 
         # Message delta (final tokens)
         elif event_type == "message_delta":
             delta = getattr(event, "delta", None)
             if delta:
-                # trailing token
                 text = getattr(delta, "text", "")
                 if text:
                     self._append_text(text)
@@ -177,75 +196,184 @@ class StreamHandler:
         return self._tool_calls
 
 
-def run_one_turn(
+def stream_one_turn(
     client: DraguniteusClient,
     messages: list[dict],
     system: str | None,
     config: Config,
     full_drama: bool = True,
-) -> tuple[str, list[dict], int, int, str]:
-    """Run a single agent turn with streaming.
+    on_tool_call: callable = None,
+    on_tool_start: callable = None,
+    on_tool_use_start: callable = None,
+) -> Iterator[tuple[str, str, list[dict] | None, bool]]:
+    """Stream a single agent turn, yielding progressive results for Rich.Live display.
 
-    Returns (text_response, tool_results, input_tokens, output_tokens, thinking).
-    Token counts are the sum of all API calls in this turn.
-    Thinking is the raw thinking content from extended thinking.
+    Yields tuples of (text, thinking, pending_tool_calls_or_None, is_final).
+    - text: partial response text accumulated so far
+    - thinking: partial thinking text accumulated so far
+    - pending_tool_calls: list of completed tool calls when a tool is fully parsed (None otherwise)
+    - is_final: True only when the streaming phase is done (all events drained)
+
+    After is_final=True with tool_calls populated, the caller must execute tools
+    and call back with results. This function does NOT execute tools — it only
+    streams and yields. This allows the caller to display progressively during streaming.
     """
     tools = client.get_tool_schemas()
     console = _console
-    handler = StreamHandler(console, full_drama)
+    handler = StreamHandler(console, full_drama, on_tool_call=on_tool_call, on_tool_start=on_tool_start, on_tool_use_start=on_tool_use_start)
 
-    # Get effort-based settings
+    # --- Thinking Router: decide thinking vs direct ---
+    router = None
+    routing = {"thinking": False, "mode": "default", "reason": ""}
+    if getattr(config, "thinking_router_enabled", True):
+        try:
+            from draguniteus.thinking_router import get_thinking_router
+            router = get_thinking_router()
+            # Estimate context tokens from messages
+            import tiktoken
+            try:
+                enc = tiktoken.get_encoding("cl100k_base")
+                context_tokens = sum(len(enc.encode(str(m.get("content", "")))) for m in messages[-5:])
+            except Exception:
+                context_tokens = sum(len(str(m.get("content", ""))) // 4 for m in messages[-5:])
+            routing = router.route(messages, system or "", tools, context_tokens=context_tokens, max_context_tokens=getattr(config, "model_context_window", 204800))
+        except Exception:
+            pass
+
     effort_settings = config.get_effort_settings()
     betas = effort_settings.get("betas", [])
+    if routing.get("thinking") and router:
+        betas = router.compute_betas(betas, routing)
+    elif not routing.get("thinking"):
+        # Ensure thinking is NOT in betas for direct answers
+        betas = [b for b in betas if "thinking" not in b.lower()]
 
-    # Stream response
+    # --- Developer Role: inject developer message if enabled ---
+    developer_msg = None
+    if getattr(config, "developer_role_enabled", True):
+        try:
+            from draguniteus.role_adapter import build_developer_message_for_turn
+            tool_names = [t.get("name", "?") for t in (tools or [])]
+            developer_msg = build_developer_message_for_turn(
+                messages, tools, tracked_files=get_tracked_files(),
+            )
+        except Exception:
+            pass
+
+    # Build message list with developer role prepended
+    api_messages = list(messages)
+    if developer_msg:
+        api_messages = [developer_msg] + api_messages
+
     stream = client.stream(
-        messages=messages,
+        messages=api_messages,
         tools=tools,
         system=system,
         betas=betas,
     )
 
-    start_time = time.time()
     pending_tool_calls: list[dict] = []
-    tool_calls_indexed = False
 
     for event in stream:
-        handler.handle_event(event)
+        result = handler.handle_event(event)
+        if result:
+            pending_tool_calls.append(result)
 
-    elapsed = time.time() - start_time
+        text = handler.get_text()
+        thinking = handler.get_thinking()
+        # Update handler's token usage so caller can access it
+        in_tok, out_tok = handler.get_usage()
+        handler._input_tokens = in_tok
+        handler._output_tokens = out_tok
+        is_final = False
 
-    # Get tool calls collected during streaming (handle_event returns tool calls on content_block_stop)
-    pending_tool_calls = handler.get_tool_calls()
+        # Yield progressively: text and thinking on every event so the caller
+        # can display them in real-time. tool_calls remain None until is_final.
+        yield text, thinking, None, False
 
-    # Capture initial response text BEFORE executing tools (for display before tool output)
-    initial_text = handler.get_text() if pending_tool_calls else ""
+    # Final yield with tool calls and usage
+    in_tok, out_tok = handler.get_usage()
+    is_final = True
+    # Store on handler AND on function for backward compatibility
+    handler._input_tokens = in_tok
+    handler._output_tokens = out_tok
+    stream_one_turn._last_usage = in_tok + out_tok
+    yield handler.get_text(), handler.get_thinking(), pending_tool_calls, True
 
-    # If we have tool calls to execute
+
+def execute_tool_calls(
+    pending_tool_calls: list[dict],
+    messages: list[dict],
+    handler: StreamHandler,
+    tool_calls_indexed: bool = False,
+) -> tuple[list[dict], list[dict], bool]:
+    """Execute a list of pending tool calls and return results.
+
+    Returns (tool_results, new_tool_calls, tool_calls_indexed).
+    """
     tool_results = []
-    if pending_tool_calls:
-        for tc in pending_tool_calls:
-            name = tc.get("name")
-            args = tc.get("args", "")
-            # Parse args from JSON
-            import json
-            try:
-                parsed = json.loads(args) if args else {}
-            except json.JSONDecodeError:
-                parsed = {"raw": args}
+    new_tool_calls: list[dict] = []
+    hook_runner = _get_hook_runner()
 
-            # Track files touched by this tool for rules injection
-            _track_tool_files(name, parsed)
+    # --- Tool Reflection: track stats ---
+    reflection = None
+    try:
+        from draguniteus.tools.reflection import get_tool_reflection
+        reflection = get_tool_reflection()
+    except Exception:
+        pass
 
-            # Execute tool
-            result = None
-            hook_runner = _get_hook_runner()
+    # --- Nested Tool Executor for MCP ---
+    nested_executor = None
+    if getattr(handler, "_nested_tool_enabled", True):
+        try:
+            from draguniteus.tools.nested_tool_executor import NestedToolExecutor
+            from draguniteus.tools.mcp_tools import tool_mcp_call as mcp_call_fn
+            nested_executor = NestedToolExecutor(
+                max_depth=getattr(handler, "_nested_tool_max_depth", 5),
+                tool_map=dict(TOOL_MAP),
+                mcp_tool_func=mcp_call_fn,
+            )
+        except Exception:
+            pass
 
-            # Check if it's an MCP tool call (mcp__server__tool pattern)
-            if name.startswith("mcp__"):
+    # --- Self-Correction Engine ---
+    self_correction = None
+    try:
+        from draguniteus.self_correction import get_self_correction_engine
+        self_correction = get_self_correction_engine()
+    except Exception:
+        pass
+
+    for tc in pending_tool_calls:
+        name = tc.get("name")
+        args = tc.get("args", "")
+        import json
+        try:
+            parsed = json.loads(args) if args else {}
+        except json.JSONDecodeError:
+            parsed = {"raw": args}
+
+        _track_tool_files(name, parsed)
+
+        # Record tool start in reflection
+        if reflection:
+            reflection.record_start(name)
+
+        result = None
+
+        # MCP tool call — use nested executor if available
+        if name.startswith("mcp__"):
+            if nested_executor:
+                try:
+                    result = nested_executor._call_mcp_tool(
+                        type("Node", (), {"name": name, "args": parsed, "depth": 0, "id": name})()
+                    )
+                except Exception as e:
+                    result = f"MCP tool error: {e}"
+            else:
                 parts = name.split("__", 2)
                 if len(parts) == 3:
-                    _, server_name, mcp_tool_name = parts
                     try:
                         from draguniteus.tools.mcp_tools import tool_mcp_call
                         result = tool_mcp_call(name, parsed)
@@ -253,102 +381,180 @@ def run_one_turn(
                         result = f"MCP tool error: {e}"
                 else:
                     result = f'MCP error: invalid tool name format "{name}"'
-                tool_results.append({"tool": name, "result": result})
-                continue
 
-            tool_fn = TOOL_MAP.get(name)
-            if tool_fn:
-                # Run PreToolUse hooks
-                hook_result = hook_runner.run_prettooluse(name, parsed, args)
-                blocked = False
-                if hook_result:
-                    blocked = hook_result.get("block", False)
-                    system_msg = hook_result.get("systemMessage", "")
-                    if blocked:
-                        result = f"[BLOCKED by hook] {system_msg}"
-                    elif system_msg:
-                        # Warn but proceed
-                        warn_msg = system_msg
-                        try:
-                            exec_result = tool_fn(**parsed)
-                            result = f"{warn_msg}\n\n{exec_result}"
-                        except Exception as e:
-                            result = f"Tool error: {e}"
-                    else:
-                        try:
-                            result = tool_fn(**parsed)
-                        except Exception as e:
-                            result = f"Tool error: {e}"
+            success = not str(result or "").startswith("MCP tool error")
+            if reflection:
+                reflection.record_result(name, success, str(result)[:200] if not success else "")
+            tool_results.append({"tool": name, "result": result, "success": success})
+
+            # Record Write/Edit for self-correction
+            if self_correction and name in ("Write", "Edit"):
+                try:
+                    file_path = parsed.get("file_path", "")
+                    content = parsed.get("content", "")
+                    if content and file_path:
+                        self_correction.record_write(file_path, content, name)
+                except Exception:
+                    pass
+            continue
+
+        tool_fn = TOOL_MAP.get(name)
+        if tool_fn:
+            hook_result = hook_runner.run_prettooluse(name, parsed, args)
+            blocked = False
+            if hook_result:
+                blocked = hook_result.get("block", False)
+                system_msg = hook_result.get("systemMessage", "")
+                if blocked:
+                    result = f"[BLOCKED by hook] {system_msg}"
+                elif system_msg:
+                    warn_msg = system_msg
+                    try:
+                        exec_result = tool_fn(**parsed)
+                        result = f"{warn_msg}\n\n{exec_result}"
+                    except Exception as e:
+                        result = f"Tool error: {e}"
                 else:
                     try:
                         result = tool_fn(**parsed)
                     except Exception as e:
                         result = f"Tool error: {e}"
             else:
-                result = f"Unknown tool: {name}"
+                try:
+                    result = tool_fn(**parsed)
+                except Exception as e:
+                    result = f"Tool error: {e}"
+        else:
+            result = f"Unknown tool: {name}"
 
-            tool_results.append({
-                "tool": name,
-                "result": result,
-            })
+        # Record tool result in reflection
+        success = result and not str(result).startswith("Tool error") and not str(result).startswith("Unknown tool")
+        if reflection:
+            reflection.record_result(name, success, str(result)[:200] if not success else "")
 
-            # Run PostToolUse hooks
+        tool_results.append({"tool": name, "result": result, "success": success})
+
+        try:
+            hook_runner.run_posttooluse(name, parsed, str(result))
+        except Exception:
+            pass
+
+        # Self-correction: record Write/Edit for verification
+        if self_correction and name in ("Write", "Edit"):
             try:
-                hook_runner = _get_hook_runner()
-                hook_runner.run_posttooluse(name, parsed, str(result))
+                file_path = parsed.get("file_path", "")
+                content = parsed.get("content", "")
+                if content and file_path:
+                    self_correction.record_write(file_path, content, name)
             except Exception:
                 pass
 
-            # Learn from successful tool sequence (after all tools complete)
-            if not tool_calls_indexed:
-                tool_calls_indexed = True
-                try:
-                    from draguniteus.memory.pattern_library import _get_pattern_library
-                    lib = _get_pattern_library()
-                    tool_names = [tc.get("name", "") for tc in tool_calls]
-                    # Extract code-like content from tool results
-                    code_content = ""
-                    language = "text"
-                    for tr in tool_results:
-                        res = str(tr.get("result", ""))
-                        # Look for code blocks
-                        if "```" in res:
-                            # Extract first code block
-                            parts = res.split("```")
-                            for i in range(1, len(parts), 2):
-                                if parts[i].strip():
-                                    code_content = parts[i].strip()
-                                    # Try to detect language from tool name or result
-                                    if "python" in tool_names or "python" in res:
-                                        language = "python"
-                                    elif "javascript" in tool_names or "javascript" in res or "js" in res:
-                                        language = "javascript"
-                                    elif "typescript" in tool_names or "typescript" in res or "ts" in res:
-                                        language = "typescript"
-                                    break
-                        if code_content:
-                            break
-                    if tool_names and (code_content or text):
-                        lib.learn_from_tool_sequence(
-                            tool_names=tool_names,
-                            code=code_content or text[:500],
-                            language=language,
-                            task=text[:200] if text else " ".join(tool_names),
-                        )
-                except Exception:
-                    pass
+        if not tool_calls_indexed:
+            tool_calls_indexed = True
+            try:
+                from draguniteus.memory.pattern_library import _get_pattern_library
+                lib = _get_pattern_library()
+                tool_names = [t.get("name", "") for t in pending_tool_calls]
+                code_content = ""
+                language = "text"
+                for tr in tool_results:
+                    res = str(tr.get("result", ""))
+                    if "```" in res:
+                        parts = res.split("```")
+                        for i in range(1, len(parts), 2):
+                            if parts[i].strip():
+                                code_content = parts[i].strip()
+                                if "python" in tool_names or "python" in res:
+                                    language = "python"
+                                elif "javascript" in tool_names or "js" in res:
+                                    language = "javascript"
+                                elif "typescript" in tool_names or "ts" in res:
+                                    language = "typescript"
+                                break
+                    if code_content:
+                        break
+            except Exception:
+                pass
 
-            # Re-call model with tool result
-            messages.append({
-                "role": "assistant",
-                "content": [{"type": "tool_use", "name": name, "input": parsed}]
-            })
-            messages.append({
-                "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": tc.get("id", ""), "content": str(result)}]
-            })
+        messages.append({
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": name, "input": parsed}]
+        })
+        messages.append({
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": tc.get("id", ""), "content": str(result)}]
+        })
 
-        # Get follow-up response
+    return tool_results, new_tool_calls, tool_calls_indexed
+
+
+def run_one_turn(
+    client: DraguniteusClient,
+    messages: list[dict],
+    system: str | None,
+    config: Config,
+    full_drama: bool = True,
+) -> tuple[str, list[dict], int, int, str]:
+    """Run a single agent turn with streaming (fully buffered, for backward compat).
+
+    Returns (text_response, tool_results, input_tokens, output_tokens, thinking).
+    """
+    tools = client.get_tool_schemas()
+    console = _console
+    handler = StreamHandler(console, full_drama)
+
+    # --- Thinking Router ---
+    routing = {"thinking": False}
+    if getattr(config, "thinking_router_enabled", True):
+        try:
+            from draguniteus.thinking_router import get_thinking_router
+            router = get_thinking_router()
+            routing = router.route(messages, system or "")
+            if routing.get("thinking") and router:
+                betas = router.compute_betas([], routing)
+            else:
+                betas = []
+        except Exception:
+            betas = []
+    else:
+        effort_settings = config.get_effort_settings()
+        betas = effort_settings.get("betas", [])
+
+    # --- Developer Role ---
+    developer_msg = None
+    if getattr(config, "developer_role_enabled", True):
+        try:
+            from draguniteus.role_adapter import build_developer_message_for_turn
+            developer_msg = build_developer_message_for_turn(messages, tools, tracked_files=get_tracked_files())
+        except Exception:
+            pass
+
+    api_messages = list(messages)
+    if developer_msg:
+        api_messages = [developer_msg] + api_messages
+
+    stream = client.stream(
+        messages=api_messages,
+        tools=tools,
+        system=system,
+        betas=betas,
+    )
+
+    pending_tool_calls: list[dict] = []
+    tool_calls_indexed = False
+
+    for event in stream:
+        handler.handle_event(event)
+
+    pending_tool_calls = handler.get_tool_calls()
+    initial_text = handler.get_text() if pending_tool_calls else ""
+
+    tool_results = []
+    if pending_tool_calls:
+        tool_results, _, tool_calls_indexed = execute_tool_calls(
+            pending_tool_calls, messages, handler, tool_calls_indexed
+        )
+
         stream2 = client.stream(messages=messages, tools=tools, system=system, betas=betas)
         handler2 = StreamHandler(console, full_drama)
         for event in stream2:
@@ -362,9 +568,12 @@ def run_one_turn(
         text = handler.get_text()
 
     thinking = handler.get_thinking()
-
-    # Return initial response text when tools were called (shows what model said before tools)
-    return initial_text or text, tool_results, handler._input_tokens, handler._output_tokens, thinking
+    # The logic: prefer follow-up text (handler2) if non-empty, else initial_text.
+    # - No tools: initial_text="", text=handler's text -> use text
+    # - Tools + follow-up: initial_text="...Done!", text=handler2's text -> use text
+    # - Tools + no follow-up: initial_text="...Done!", text="" -> use initial_text
+    final_text = text if text else initial_text
+    return final_text, tool_results, handler._input_tokens, handler._output_tokens, thinking
 
 
 def run_agent_loop(
@@ -384,10 +593,8 @@ def run_agent_loop(
         for event in stream:
             result = handler.handle_event(event)
             if result:
-                # tool call — handled in run_one_turn
                 pass
 
-            # Render current text as markdown
             text = handler.get_text()
             if text:
                 md = Markdown(text)

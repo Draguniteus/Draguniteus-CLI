@@ -178,6 +178,19 @@ class Config:
         return self._raw.get("timeout_ms", 300000)
 
     @property
+    def mcp_servers(self) -> dict[str, Any]:
+        """MCP server configurations (both mcpServers and mcp_servers keys accepted)."""
+        servers = self._raw.get("mcpServers", {})
+        if not servers:
+            servers = self._raw.get("mcp_servers", {})
+        return servers
+
+    @property
+    def tavily_api_key(self) -> str:
+        """Tavily API key for web search."""
+        return os.environ.get("TAVILY_API_KEY", self._raw.get("tavily_api_key", ""))
+
+    @property
     def hooks(self) -> dict[str, Any]:
         """Get hook configurations from settings."""
         return self._raw.get("hooks", {})
@@ -267,6 +280,42 @@ class Config:
     def get_style(self) -> str | None:
         """Get the active output style."""
         return self._raw.get("style")
+
+    # -------------------------------------------------------------------------
+    # Agent intelligence features
+    # -------------------------------------------------------------------------
+
+    @property
+    def thinking_router_enabled(self) -> bool:
+        return self._raw.get("thinking_router_enabled", True)
+
+    @property
+    def developer_role_enabled(self) -> bool:
+        return self._raw.get("developer_role_enabled", True)
+
+    @property
+    def checkpoint_every(self) -> int:
+        return self._raw.get("checkpoint_every", 5)
+
+    @property
+    def nested_tool_max_depth(self) -> int:
+        return self._raw.get("nested_tool_max_depth", 5)
+
+    @property
+    def nested_tool_enabled(self) -> bool:
+        return self._raw.get("nested_tool_enabled", True)
+
+    @property
+    def self_improvement_enabled(self) -> bool:
+        return self._raw.get("self_improvement_enabled", True)
+
+    @property
+    def preview_server_enabled(self) -> bool:
+        return self._raw.get("preview_server_enabled", False)
+
+    @property
+    def chromadb_enabled(self) -> bool:
+        return self._raw.get("chromadb_enabled", True)
 
     # -------------------------------------------------------------------------
     # Migration helpers

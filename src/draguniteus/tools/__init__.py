@@ -1,5 +1,5 @@
 """Tools package."""
-from draguniteus.tools.filesystem import FILESYSTEM_TOOLS, tool_read, tool_write, tool_edit, tool_glob, tool_grep
+from draguniteus.tools.filesystem import FILESYSTEM_TOOLS, tool_read, tool_write, tool_edit, tool_multi_edit, tool_glob, tool_grep
 from draguniteus.tools.shell import SHELL_TOOLS, tool_bash
 from draguniteus.tools.git import GIT_TOOLS, tool_git_status, tool_git_diff, tool_git_commit, tool_git_push, tool_git_pr_create
 from draguniteus.tools.memory import MEMORY_TOOLS, tool_write_daily_note, tool_read_daily_note, tool_write_project_memory, tool_read_project_memory
@@ -37,6 +37,7 @@ TOOL_MAP = {
     "Read": tool_read,
     "Write": tool_write,
     "Edit": tool_edit,
+    "MultiEdit": tool_multi_edit,
     "Glob": tool_glob,
     "Grep": tool_grep,
     # Shell

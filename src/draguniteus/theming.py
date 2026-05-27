@@ -16,6 +16,177 @@ from rich.text import Text
 console = Console(force_terminal=True, safe_box=True)
 
 # ------------------------------------------------------------------
+# Claude Code color palette (ANSI escape codes for Windows compatibility)
+# ------------------------------------------------------------------
+
+# Claude brand purple (#bd93f9) - used for header, accept edits on
+CLAUDE_PURPLE = "\033[38;5;141m"
+
+# Orange/yellow - used for thinking verbs (✻ Mulling...)
+ORANGE = "\033[33m"
+
+# Cyan/teal - used for tool names (Bash, Grep, Read, etc.)
+CYAN = "\033[36m"
+
+# Dim gray - used for secondary text (esc to interrupt, ctrl+o, etc.)
+DIM = "\033[90m"
+
+# White/bright - used for primary text and bullets (regular responses)
+WHITE = "\033[97m"
+BRIGHT = "\033[1m"
+
+# Red - used for errors and failed operations
+RED = "\033[31m"
+
+# Green - used for success and completed operations
+GREEN = "\033[32m"
+
+# Blue - used for bash commands and running operations
+BLUE = "\033[34m"
+
+# Yellow - used for warnings
+YELLOW = "\033[33m"
+
+# Reset
+RESET = "\033[0m"
+
+# ------------------------------------------------------------------
+# Claude Code bullet and sub-item symbols
+# ------------------------------------------------------------------
+
+# Main bullet (●) - color varies by context
+BULLET = "●"
+
+# Sub-item bullet (⎿) - used for indented items like file paths
+# This is U+250F BOX DRAWINGS LIGHT DOWN AND RIGHT
+SUB_ITEM_BULLET = "⎿"
+
+# Running/thinking indicator variations
+RUNNING_BULLET = "●"  # Can be made to blink with ANSI
+
+# Color for sub-item text (typically dim gray or cyan)
+SUB_ITEM_COLOR = CYAN  # Use cyan for sub-items like file paths
+
+# ------------------------------------------------------------------
+# Bullet helpers (Claude Code uses colored bullets based on context)
+# ------------------------------------------------------------------
+
+def print_bullet(text: str, color: str = WHITE) -> None:
+    """Print a line with a colored bullet prefix.
+
+    Bullet colors in Claude Code:
+    - WHITE: Regular responses
+    - CYAN: Bash commands, tools
+    - RED: Errors
+    - GREEN: Success/completed
+    - BLUE: Running operations
+    """
+    try:
+        msg = f"  {color}●{RESET} {text}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+
+
+def print_bullet_inline(tool_name: str, args_display: str = "", status: str = "", bullet_color: str = CYAN) -> None:
+    """Print an inline tool call bullet with Claude Code styling.
+
+    Format: ● ToolName(args) status
+    - Bullet color depends on operation type
+    - Tool name is cyan
+    - Args are white
+    - Status is dim gray
+    """
+    if status:
+        status_str = f"{DIM} ({status}){RESET}"
+    else:
+        status_str = ""
+
+    try:
+        msg = f"  {bullet_color}●{RESET} {CYAN}{tool_name}{RESET}({WHITE}{args_display}{RESET}){status_str}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+
+
+def print_running_bullet(tool_name: str, args_display: str = "", elapsed: str = "", timeout: str = "") -> None:
+    """Print a bullet for a running operation (blue bullet).
+
+    Format: ● ToolName(args) (status)
+    """
+    if elapsed and timeout:
+        status = f"Running… ({elapsed} · timeout {timeout}s)"
+    elif elapsed:
+        status = f"Running… ({elapsed})"
+    else:
+        status = "Running…"
+    print_bullet_inline(tool_name, args_display, status, BLUE)
+
+
+def print_error_bullet(text: str) -> None:
+    """Print an error bullet (red)."""
+    print_bullet(text, RED)
+
+
+def print_success_bullet(text: str) -> None:
+    """Print a success bullet (green)."""
+    print_bullet(text, GREEN)
+
+
+def print_tool_bullet(tool_name: str, args_display: str = "", status: str = "") -> None:
+    """Print a tool call bullet (cyan).
+
+    Format: ● ToolName(args) (status)
+    """
+    print_bullet_inline(tool_name, args_display, status, CYAN)
+
+
+def print_sub_item(text: str, color: str = SUB_ITEM_COLOR) -> None:
+    """Print an indented sub-item using ⎿ symbol (Claude Code style).
+
+    Format:   ⎿  text
+    Used for: file paths under tool calls, secondary info, etc.
+    """
+    try:
+        msg = f"  {color}{SUB_ITEM_BULLET}{RESET} {text}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+
+
+def print_sub_items(items: list[str], color: str = SUB_ITEM_COLOR) -> None:
+    """Print multiple indented sub-items.
+
+    Each item gets its own ⎿ prefix.
+    """
+    for item in items:
+        print_sub_item(item, color)
+
+
+def print_blinking_bullet(text: str, bullet_color: str = BLUE) -> None:
+    """Print a bullet that appears to blink/pulse (for running operations).
+
+    Uses ANSI hide/show cursor or rapid color toggle to simulate blink.
+    In pipe mode, falls back to solid color.
+    """
+    # Try to create blinking effect with cursor hide/show
+    # In pipe/non-TTY mode, just show solid
+    try:
+        # Hide cursor
+        sys.stdout.buffer.write(b"\033[?25l")
+        msg = f"  {bullet_color}●{RESET} {text}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+        # Show cursor
+        sys.stdout.buffer.write(b"\033[?25h")
+    except Exception:
+        # Fallback to solid bullet
+        print_bullet(text, bullet_color)
+
+# ------------------------------------------------------------------
 # Color helpers (return Text objects for Rich)
 # ------------------------------------------------------------------
 
@@ -52,7 +223,7 @@ SEPARATOR = "─" * 68
 # Thinking verbs (minimal, no dragon branding)
 # ------------------------------------------------------------------
 
-THINKING_VERBS = ["Cooked", "Prepared", "Simmered", "Seared", "Broiled", "Grilled"]
+THINKING_VERBS = ["Mulling", "Pondering", "Considering", "Examining", "Analyzing", "Processing"]
 
 def get_thinking_verb() -> str:
     return THINKING_VERBS[hash(str(__import__("time").time())) % len(THINKING_VERBS)]
@@ -90,11 +261,12 @@ def print_welcome(
     full_drama: bool = True,
     username: str | None = None,
     model: str = "MiniMax-M2.7",
-    effort: str = "High Effort",
+    effort: str = "high effort",
     path: str | None = None,
 ) -> None:
-    """Print single-line header matching Claude Code's box-drawing style."""
+    """Print branded header matching Claude Code's box-drawing style."""
     import os
+    import sys
     if not full_drama:
         return
     try:
@@ -102,16 +274,42 @@ def print_welcome(
             username = os.environ.get("USERNAME") or os.environ.get("USER") or "User"
         if path is None:
             path = os.getcwd()
-        # Use plain print to avoid Rich Unicode issues on Windows
-        print(f"[Draguniteus v0.1.0] {model} with {effort.lower()} -- {path}")
-        print()
-    except Exception:
+
+        # Claude Code header characters: ▐▛███▜▌ (U+2590, U+259B, U+2588, etc.)
+        # These render correctly in Windows terminals via UTF-8
+        header_line1 = " ▐▛███▜▌   Draguniteus v0.1.0"
+        header_line2 = "▝▜█████▛▘  " + model + " with " + effort + " · API Usage Billing"
+        cwd_line = "  ▘▘ ▝▝    " + path
+
+        # Print using buffer to avoid cp1252 encoding issues on Windows
+        def write_out(s):
+            try:
+                sys.stdout.write(s)
+                sys.stdout.flush()
+            except UnicodeEncodeError:
+                sys.stdout.buffer.write(s.encode('utf-8', errors='replace'))
+                sys.stdout.buffer.flush()
+
+        write_out(f"{CLAUDE_PURPLE}{BRIGHT}{header_line1}{RESET}\n")
+        write_out(f"{CLAUDE_PURPLE}{BRIGHT}{header_line2}{RESET}\n")
+        write_out("\n")
+        write_out(f"{DIM}{cwd_line}{RESET}\n")
+        write_out("\n")
+        write_out("─" * 76 + "\n")
+        write_out("\n")
+    except Exception as e:
         print("Draguniteus v0.1.0")
 
 def print_thinking(seconds: float, full_drama: bool = True) -> None:
-    """Print thinking indicator: * Cooked for Xs"""
+    """Print thinking indicator: ✻ Mulling for Xs (Claude Code style - orange)"""
     if full_drama:
-        print(f"* {get_thinking_verb()} for {seconds:.1f}s")
+        msg = f"✻ {get_thinking_verb()}... ({seconds:.1f}s)"
+        try:
+            # Orange for thinking verb
+            sys.stdout.buffer.write(f"{ORANGE}{msg}{RESET}\n".encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
+        except Exception:
+            pass
 
 def print_divider(full_drama: bool = True) -> None:
     """Print clean separator between turns."""
@@ -127,7 +325,44 @@ def print_prompt(full_drama: bool = True) -> str:
         ).ask()
         return result or ""
     except Exception:
-        return input("> ").strip()
+        # questionary can fail on Windows conhost/Git Bash (NoConsoleScreenBufferError)
+        # Fall back to Python's input() which works reliably everywhere
+        return input("❯ ").strip()
+
+
+def print_permission_prompt(tool: str, detail: str, full_drama: bool = True) -> str:
+    """Print inline permission prompt and return user response.
+
+    Claude Code style: shows the command in yellow with warning color,
+    prompts with 'Allow / Deny / Allow always' options.
+    Works on Windows conhost/pipes where questionary can't prompt.
+
+    Returns 'y' (allow), 'n' (deny), or 'a' (allow always for this project).
+    """
+    warning = f"\n  \033[33m⚠️  Permission required: {tool}\033[0m"
+    detail_display = f"  \033[90m  {detail[:80]}\033[0m"
+    prompt = f"\n  \033[90m(y) Allow  (n) Deny  (a) Allow always for this project\033[0m\n❯ "
+    try:
+        sys.stdout.buffer.write((warning + "\n").encode('utf-8', errors='replace'))
+        sys.stdout.buffer.write((detail_display + "\n").encode('utf-8', errors='replace'))
+        sys.stdout.buffer.write(prompt.encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+    try:
+        sys.stdout.buffer.flush()
+        sys.stdin.flush()
+        response = input("").strip().lower()
+        if not response:
+            response = "y"
+        if response in ("a", "allow always"):
+            return "a"
+        elif response in ("n", "deny", "no"):
+            return "n"
+        return "y"
+    except (EOFError, KeyboardInterrupt):
+        return "n"
+
 
 def print_error(msg: str, full_drama: bool = True) -> None:
     _print(f"[Error] {msg}")
@@ -155,9 +390,75 @@ def print_status_line(
     # Print in dim gray, preceded by a blank line for separation
     print()
     try:
-        print(f"\033[90m{status}\033[0m")
+        sys.stdout.buffer.write(f"{DIM}{status}{RESET}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
     except Exception:
-        print(status)
+        try:
+            print(status)
+        except Exception:
+            pass
+
+def print_recap(text: str) -> None:
+    """Print Claude Code-style recap: ※ recap: [text] (dim gray)"""
+    lines = text.split('\n')
+    first = True
+    for line in lines:
+        if first:
+            recap_line = f"※ recap: {line}"
+            first = False
+        else:
+            recap_line = f"  {line}" if line else ""
+        if recap_line:
+            try:
+                sys.stdout.buffer.write(f"{DIM}{recap_line}{RESET}\n".encode('utf-8', errors='replace'))
+                sys.stdout.buffer.flush()
+            except Exception:
+                pass
+
+
+def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
+    """Print Claude Code-style bottom bar with accept edits controls.
+
+    Format: ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt
+    - "accept edits on" is light purple (Claude brand)
+    - "shift+tab to cycle" and "esc to interrupt" are dim gray
+    Or when no pending edits: (ctrl+e to expand results) - all dim gray
+    """
+    if has_edits and edit_count > 0:
+        # Purple for "accept edits on", dim for rest
+        bar = f"  {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}{DIM} (shift+tab to cycle) · esc to interrupt{RESET}"
+    else:
+        bar = f"{DIM}  (ctrl+e to expand results · esc to interrupt){RESET}"
+    try:
+        sys.stdout.buffer.write(f"{bar}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        try:
+            print(bar)
+        except Exception:
+            pass
+
+
+def print_tool_call(tool_name: str, args_display: str = "", status: str = "") -> None:
+    """Print a tool call like Claude Code: ● Bash(command) (status)
+
+    - "●" is white/bright
+    - tool_name (Bash, Grep, etc.) is cyan
+    - args_display is white
+    - status in parentheses is dim gray
+    """
+    if status:
+        status_str = f"{DIM} ({status}){RESET}"
+    else:
+        status_str = ""
+
+    try:
+        msg = f"  {WHITE}●{RESET} {CYAN}{tool_name}{RESET}({WHITE}{args_display}{RESET}){status_str}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+
 
 def stream_markdown(text: str, live: Live | None = None) -> None:
     """Render markdown to console, optionally inside a Live display."""

@@ -38,14 +38,18 @@ def tool_bash(
 ) -> str:
     """Execute a shell command and return stdout+stderr."""
     # Check permissions before execution
-    from draguniteus.permissions import PermissionStore
-    from draguniteus.config import Config
+    # Import from cli to use the shared permission store with permission_mode
+    from draguniteus import cli
+    perms = cli._get_permissions() if hasattr(cli, '_get_permissions') else None
 
-    try:
-        perms = PermissionStore(Config())
-    except Exception:
-        # Config not available — allow by default
-        perms = None
+    if perms is None:
+        # Fallback if cli not initialized properly
+        from draguniteus.permissions import PermissionStore
+        from draguniteus.config import Config
+        try:
+            perms = PermissionStore(Config())
+        except Exception:
+            perms = None
 
     if perms:
         check = perms.check("Bash", command)
@@ -53,33 +57,36 @@ def tool_bash(
             return f"[Permission denied] Command matches a deny pattern."
         if check == "ask":
             # Auto-approve in non-interactive/CI mode, when stdin is not a TTY,
-            # or when questionary can't prompt (NoConsoleScreenBufferError in Git Bash)
+            # when questionary can't prompt (NoConsoleScreenBufferError in Git Bash),
+            # or when permission mode is dontAsk/bypassPermissions.
+            # Default to "y" (auto-approve) since this is a CLI coding agent —
+            # user is present and can interrupt if something goes wrong.
+            permission_mode = getattr(cli, '_permission_mode', 'default') if hasattr(cli, '_permission_mode') else 'default'
             if os.environ.get("DRAGUNITEUS_NONINTERACTIVE") == "1":
+                pass  # auto-approve
+            elif permission_mode in ("dontAsk", "bypassPermissions"):
                 pass  # auto-approve
             elif not sys.stdin.isatty():
                 pass  # auto-approve (pipe/heredoc mode)
             else:
-                # Interactive mode — prompt user
-                response = "n"
+                # Interactive mode — prompt user, default to approve if prompt fails
+                response = "y"
                 try:
                     from draguniteus import theming
                     response = theming.print_permission_prompt("Bash", command, full_drama=True)
-                except Exception as e:
-                    # If questionary fails (e.g., NoConsoleScreenBufferError in Git Bash
-                    # when stdout is not a TTY), auto-approve
+                except Exception:
+                    # questionary/prompt failed on Windows conhost — auto-approve
                     response = "y"
-                    # But also check for stdin issues that indicate non-interactive mode
-                    try:
-                        test = input("")
-                    except (EOFError, KeyboardInterrupt):
-                        pass  # non-interactive, use the auto-approve above
-                    except Exception:
-                        # Something else went wrong — still auto-approve rather than block
-                        pass
 
+                if response == "a":
+                    # Save permanent rule for this project + command pattern
+                    perms.add_rule("Bash", command, "auto_approve")
+                    perms.save()
+                    response = "y"
                 if response != "y":
                     return f"[Permission denied] User denied: {command[:50]}..."
-                perms.remember_approval("Bash", command)
+                if response == "y":
+                    perms.remember_approval("Bash", command)
 
     cwd = Path(working_dir).expanduser() if working_dir else Path.cwd()
     # Normalize Windows Git Bash paths

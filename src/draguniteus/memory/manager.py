@@ -70,8 +70,13 @@ class MemoryManager:
                 self._vector_memory = None
         return self._vector_memory
 
-    def load_for_agent(self) -> str:
-        """Return all relevant memory as a string for injection into system prompt."""
+    def load_for_agent(self, query: str | None = None) -> str:
+        """Return all relevant memory as a string for injection into system prompt.
+
+        Args:
+            query: optional search query (e.g. last user message) used to
+                    retrieve relevant memories from ChromaDB.
+        """
         parts = []
 
         # Long-term
@@ -84,13 +89,24 @@ class MemoryManager:
         if daily:
             parts.append(f"## Today\n{daily}")
 
-        # Vector memory count (if available)
+        # Vector memory: semantic search + count
         vm = self.vector_memory
         if vm is not None:
             try:
                 count = vm.count()
                 if count > 0:
-                    parts.append(f"## Vector Memory\n{count} memories indexed (use /memory search <query> to query)")
+                    if query:
+                        # Retrieve top memories relevant to current task
+                        results = vm.search(query, n_results=5)
+                        if results:
+                            mem_lines = [f"## Relevant Memories\n"]
+                            for r in results:
+                                snippet = r.get("content", "")[:300]
+                                mem_lines.append(f"- [{r.get('type', 'general')}] {snippet}")
+                            parts.append("\n".join(mem_lines))
+                        parts.append(f"## Vector Memory\n{count} memories indexed")
+                    else:
+                        parts.append(f"## Vector Memory\n{count} memories indexed (use /memory search <query> to query)")
             except Exception:
                 pass
 

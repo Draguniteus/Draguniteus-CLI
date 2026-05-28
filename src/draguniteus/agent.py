@@ -248,23 +248,23 @@ def stream_one_turn(
         # Ensure thinking is NOT in betas for direct answers
         betas = [b for b in betas if "thinking" not in b.lower()]
 
-    # --- Developer Role: inject developer message if enabled ---
-    developer_msg = None
+    # --- Developer Role: inject developer context into system prompt if enabled ---
     if getattr(config, "developer_role_enabled", True):
         try:
-            from draguniteus.role_adapter import build_developer_message_for_turn
-            tool_names = [t.get("name", "?") for t in (tools or [])]
-            developer_msg = build_developer_message_for_turn(
-                messages, tools, tracked_files=get_tracked_files(),
+            from draguniteus.role_adapter import get_role_adapter
+            adapter = get_role_adapter()
+            adapter.set_tracked_files(get_tracked_files() or [])
+            developer_content = adapter.build_developer_message_for_turn(
+                messages=messages,
+                tools=tools,
+                tracked_files=get_tracked_files(),
             )
+            if developer_content:
+                system = (system or "") + "\n\n[Developer Context]\n" + developer_content
         except Exception:
             pass
 
-    # Build message list with developer role prepended
     api_messages = list(messages)
-    if developer_msg:
-        api_messages = [developer_msg] + api_messages
-
     stream = client.stream(
         messages=api_messages,
         tools=tools,
@@ -439,6 +439,19 @@ def execute_tool_calls(
         except Exception:
             pass
 
+        # Git auto-commit after Write/Edit if enabled
+        if name in ("Write", "Edit") and getattr(config, "git_auto_commit_enabled", False):
+            try:
+                from draguniteus.tools.git import tool_git_auto_commit
+                import os
+                file_path = parsed.get("file_path", "")
+                if file_path and os.path.exists(file_path):
+                    commit_result = tool_git_auto_commit()
+                    if commit_result and "No changes" not in commit_result:
+                        tool_results.append({"tool": "GitAutoCommit", "result": commit_result, "success": True})
+            except Exception:
+                pass
+
         # Self-correction: record Write/Edit for verification
         if self_correction and name in ("Write", "Edit"):
             try:
@@ -521,17 +534,20 @@ def run_one_turn(
         betas = effort_settings.get("betas", [])
 
     # --- Developer Role ---
-    developer_msg = None
     if getattr(config, "developer_role_enabled", True):
         try:
-            from draguniteus.role_adapter import build_developer_message_for_turn
-            developer_msg = build_developer_message_for_turn(messages, tools, tracked_files=get_tracked_files())
+            from draguniteus.role_adapter import get_role_adapter
+            adapter = get_role_adapter()
+            adapter.set_tracked_files(get_tracked_files() or [])
+            developer_content = adapter.build_developer_message_for_turn(
+                messages=messages,
+                tools=tools,
+                tracked_files=get_tracked_files(),
+            )
+            if developer_content:
+                system = (system or "") + "\n\n[Developer Context]\n" + developer_content
         except Exception:
             pass
-
-    api_messages = list(messages)
-    if developer_msg:
-        api_messages = [developer_msg] + api_messages
 
     stream = client.stream(
         messages=api_messages,
@@ -555,6 +571,18 @@ def run_one_turn(
             pending_tool_calls, messages, handler, tool_calls_indexed
         )
 
+        # --- Self-Correction: verify Write/Edit results ---
+        if getattr(config, "self_improvement_enabled", True):
+            try:
+                from draguniteus.self_correction import get_self_correction_engine
+                engine = get_self_correction_engine()
+                needs_fix, verif_results, injected_msg = engine.check_and_fix(messages)
+                if needs_fix and injected_msg:
+                    # Inject error context so the next streaming pass addresses the fix
+                    messages.append({"role": "user", "content": injected_msg})
+            except Exception:
+                pass
+
         stream2 = client.stream(messages=messages, tools=tools, system=system, betas=betas)
         handler2 = StreamHandler(console, full_drama)
         for event in stream2:
@@ -573,6 +601,10 @@ def run_one_turn(
     # - Tools + follow-up: initial_text="...Done!", text=handler2's text -> use text
     # - Tools + no follow-up: initial_text="...Done!", text="" -> use initial_text
     final_text = text if text else initial_text
+    # If self-correction fired (handler2 created), use handler2's thinking
+    # since it reflects the actual fix the model just applied
+    if pending_tool_calls and text:
+        thinking = handler2.get_thinking()
     return final_text, tool_results, handler._input_tokens, handler._output_tokens, thinking
 
 

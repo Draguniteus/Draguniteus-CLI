@@ -86,6 +86,12 @@ Built for developers who want an agent that:
 - Plans large-scale **refactors** with rollback safety
 - Learns your codebase's conventions and applies them consistently
 - Connects to **MCP servers** for extensible tool integrations
+- **Self-corrects** broken code by writing, verifying, and fixing automatically
+- Uses **dynamic thinking routing** — deep reasoning for analysis, direct for straightforward tasks
+- Maintains **3-tier memory** — project conventions, semantic graph, and ChromaDB vector store
+- **Never loses work** — atomic checkpoints save session state every 5 turns
+- Previews generated content instantly via **live preview server**
+- Tracks per-tool statistics to continuously **improve performance**
 
 ---
 
@@ -104,6 +110,14 @@ Built for developers who want an agent that:
 <img src="https://img.shields.io/badge/-Code%20Intelligence-F1C40F?style=flat&logo=search&logoColor=F1C40F" height="22" />
 <img src="https://img.shields.io/badge/-Persistent%20Sessions-95A5A6?style=flat&logo=clock&logoColor=95A5A6" height="22" />
 <img src="https://img.shields.io/badge/-Plugin%20Hooks-FF6B35?style=flat&logo=plugin&logoColor=FF6B35" height="22" />
+<img src="https://img.shields.io/badge/-Self%20Correction-8E44AD?style=flat&logo=refresh&logoColor=8E44AD" height="22" />
+<img src="https://img.shields.io/badge/-Thinking%20Router-A27DFF?style=flat&logo=brain&logoColor=A27DFF" height="22" />
+<img src="https://img.shields.io/badge/-Agentic%20Workflows-F39C12?style=flat&logo=workflow&logoColor=F39C12" height="22" />
+<img src="https://img.shields.io/badge/-Checkpoint%20%2B%20Resume-16A085?style=flat&logo=checkpoint&logoColor=16A085" height="22" />
+<img src="https://img.shields.io/badge/-Live%20Preview%20Server-E67E22?style=flat&logo=screen&logoColor=E67E22" height="22" />
+<img src="https://img.shields.io/badge/-ChromaDB%20Vector%20Memory-C0392B?style=flat&logo=database&logoColor=C0392B" height="22" />
+<img src="https://img.shields.io/badge/-Tool%20Reflection%20Stats-2C3E50?style=flat&logo=chart&logoColor=2C3E50" height="22" />
+<img src="https://img.shields.io/badge/-Nested%20Tool%20Executor-7F8C8D?style=flat&logo=layers&logoColor=7F8C8D" height="22" />
 </p>
 
 ---
@@ -362,6 +376,162 @@ Semantic search across your entire codebase:
 
 ---
 
+## 🔄 Self-Correction Engine
+
+Draguniteus doesn't just write code — it **verifies and fixes it**. After every Write or Edit, the agent runs syntax and style checks. On failure, it automatically re-prompt with the error context and generates a fix:
+
+```
+❯ write a FastAPI endpoint for user registration
+
+[D] Writing src/api/users.py...
+[D] Verifying with Python syntax check...
+[D] Syntax error: missing colon on line 23
+[D] Injecting error context → generating fix...
+[D] Fix applied. Re-verifying... ✅ Passes
+
+[D] Done — endpoint written and verified.
+```
+
+Supported verifiers: `PythonSyntaxCheck`, `ESLintCheck`, `ShellcheckCheck`
+
+---
+
+## 🧭 Thinking Router
+
+Draguniteus dynamically decides whether each task needs deep reasoning or a direct answer:
+
+| Trigger | Mode |
+|---------|------|
+| "analyze", "debug", "plan", "design" | `think` — enables `interleaved-thinking` beta |
+| "write", "create", "fix", "build" | `direct` — bypasses thinking overhead |
+| 50+ reasoning-task keywords | Auto-routes to thinking |
+| Token budget < 30% remaining | Switches to direct |
+| Many tools required | Switches to thinking |
+
+Override anytime with `/think` or `/fast`.
+
+---
+
+## 🔀 Agentic Workflow State Machine
+
+Every autonomous task follows a rigorous state machine:
+
+```
+PLANNING → EXECUTING → VERIFYING → ITERATING → DONE/FAILED
+```
+
+- **PLANNING** — Agent decomposes the task into ordered steps
+- **EXECUTING** — Runs each step via tool calls
+- **VERIFYING** — Post-tool checks (did the file compile? did tests pass?)
+- **ITERATING** — On failure, re-prompt with error context for self-fix
+- Max 3 iterations before surfacing to user
+
+```
+/workflow "build a user authentication system"
+
+[PLANNING]   Breaking down into 8 steps...
+[EXECUTING]  Step 1/8: Create User model...
+[VERIFYING]  ✅ User model compiles
+[EXECUTING]  Step 2/8: Create auth routes...
+[ITERATING]  Syntax error in route — fixing...
+```
+
+---
+
+## 💾 Checkpoint + Resume
+
+Long-running tasks are auto-checkpointed every 5 turns. Simulate a crash and resume instantly:
+
+```
+[D] Checkpoint saved: session_x  step 12/∞
+# (crash simulation)
+[D] Resuming from checkpoint: session_x  step 12
+[D] Continuing execution...
+```
+
+Checkpoints are atomic (temp-file + rename), stored in `.draguniteus/checkpoints/`, with 20-file retention pruning.
+
+---
+
+## 🌐 Live Preview Server
+
+Preview generated HTML, Markdown, and images instantly in your browser:
+
+```
+/preview src/index.html
+
+[D] Starting preview server on port 7420...
+[D] Browser opened: http://localhost:7420/index.html
+```
+
+- Markdown files auto-rendered to HTML
+- Images served with correct MIME types
+- Auto-detects previewable file types
+
+---
+
+## 🧠 3-Tier Memory System
+
+Draguniteus retains context across sessions through three tiers:
+
+**1. Project Memory** — `DRAGUNITEUS.md` in your project root (loaded every session)
+
+**2. Semantic Graph** — Tracks file relationships, decisions, and code patterns:
+```
+[D] Indexed: src/api/users.py → "user registration endpoint"
+[D] Decision: "Chose JWT over sessions for stateless auth"
+```
+
+**3. ChromaDB Vector Store** — Semantic similarity search over all code and decisions. Finds "things like this" across your entire project history.
+
+```
+❯ find code similar to JWT token generation
+[D] ChromaDB: found 3 semantically similar patterns
+```
+
+---
+
+## 📊 Tool Reflection
+
+Every tool call is tracked — call count, success rate, latency, failure reasons:
+
+```
+/tools stats
+
+  Tool          Calls   Success  Avg ms  Slowest
+  Read          1,247   99.2%    12ms    340ms
+  Write           234   97.4%    28ms    890ms
+  Bash            89    94.3%    145ms   2.1s
+  Grep            512   99.8%    8ms     120ms
+
+[D] Least reliable: Bash (94.3%) — typically permission errors
+```
+
+---
+
+## 🧩 Nested Tool Executor
+
+Execute multi-level tool dependencies with full dependency tracking and retry logic:
+
+```
+❯ deploy to staging via MCP github pipeline
+
+[1] mcp__github__authenticate → ✅
+[2]   └─ mcp__github__get_repo {owner, repo} → ✅
+[3]     └─ mcp__github__create_release {tag} → ✅
+[4]       └─ shell__docker_build {image} → ✅
+[5]         └─ shell__docker_push {registry} → ✅
+
+[D] Full pipeline completed in 4.2s
+```
+
+- 5-level depth (configurable)
+- Transient errors retry 3× with exponential backoff
+- MCP server restart on crash before retry
+- Streaming display with `│  └─` indentation
+
+---
+
 ## 🎯 Plugin System
 
 PreToolUse / PostToolUse hooks as markdown files:
@@ -431,6 +601,31 @@ export DRAGUNITEUS_MODEL=MiniMax-M2.7
 export DRAGUNITEUS_MAX_TOKENS=16384
 python -m draguniteus
 ```
+
+---
+
+## ⌨️ Slash Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `/think` | Force deep reasoning mode |
+| `/fast` | Force direct answer mode |
+| `/preview [file]` | Open file in live preview server |
+| `/orchestrate` | Launch parallel multi-agent task |
+| `/arena` | Run arena mode with 4 models |
+| `/workflow` | Start agentic workflow state machine |
+| `/plan` | Plan a refactor with rollback preview |
+| `/refactor --dry-run` | Preview refactor before applying |
+| `/checkpoint` | Save checkpoint manually |
+| `/resume [session]` | Resume from checkpoint or session |
+| `/init` | Create DRAGUNITEUS.md in project |
+| `/index [path]` | Build semantic code index |
+| `/skill list` | List all available skills |
+| `/skill add <name>` | Add a new skill |
+| `/tools stats` | Show tool call statistics |
+| `/tools create` | Build a custom dynamic tool |
+| `/critique` | Run post-task self-improvement analysis |
+| `/help` | Show all commands |
 
 ---
 

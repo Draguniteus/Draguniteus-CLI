@@ -453,8 +453,12 @@ Draguniteus is built to survive runaway output:
 45+ native tools (Read, Write, Edit, Glob, Grep, Bash, Git, Code Intel, ...)
 46 tool definitions in full tool schema
 8 concurrent sub-agents max
-30 ultra stress test sections — all passing
-218 smoke tests — all passing
+274 tests — all passing (16 test files)
+  ├── 46 optimization tests
+  ├── 28 training scenario tests
+  ├── 17 advanced scenario tests
+  ├── 13 live integration tests
+  └── + unit tests for workflows, orchestrator, checkpoint, memory, etc.
 ```
 
 ---
@@ -464,7 +468,7 @@ Draguniteus is built to survive runaway output:
 ```
 src/draguniteus/
 ├── cli.py                  # REPL + slash commands (Typer)
-├── agent.py                # Streaming tool-calling loop + output guards
+├── agent.py                # Streaming tool-calling loop + self-correction
 ├── client.py               # API client with retry logic
 ├── orchestrator.py         # Multi-agent parallel executor + progress callbacks
 ├── config.py               # Layered config (env > file > CLI)
@@ -472,6 +476,13 @@ src/draguniteus/
 ├── permissions.py          # Ask/Auto-approve/Deny rules engine
 ├── rules.py                # Rule injection + sanitization (8 regex patterns)
 ├── hook_runner.py          # PreToolUse/PostToolUse/PreCompact hooks
+├── checkpoint.py           # Atomic session checkpoint save/restore
+├── role_adapter.py        # Developer message injection per turn
+├── thinking_router.py     # Dynamic thinking vs direct routing
+├── self_correction.py      # Write→Verify→Fix loop with syntax checks
+├── self_improvement.py     # Post-task meta-critique engine
+├── streaming_display.py    # Flicker-free Rich.Live TUI rendering
+├── repl_core.py            # Vim keys + mouse support + Shift+Tab
 │
 ├── tui/
 │   ├── panels.py           # Rich.Grid multi-agent live panels
@@ -488,13 +499,23 @@ src/draguniteus/
 │   ├── review.py           # Multi-agent code review pipeline
 │   ├── minimax.py          # Media generation (image/video/audio/music)
 │   ├── code_intelligence.py # Symbol index + semantic search
-│   └── navigation.py        # Semantic code navigation
+│   ├── navigation.py        # Semantic code navigation
+│   ├── dynamic.py           # Runtime custom tool builder
+│   ├── nested_tool_executor.py # 5-level tool dependency executor
+│   └── reflection.py        # Per-tool call stats (success/latency)
 │
 ├── memory/
-│   ├── manager.py           # DRAGUNITEUS.md + daily notes
+│   ├── manager.py           # DRAGUNITEUS.md + daily notes + ChromaDB
 │   ├── pattern_library.py   # Learned tool sequence patterns (singleton)
 │   ├── conversation_archive.py # Infinite context compression (singleton)
-│   └── semantic_graph.py   # Code relationship graph
+│   ├── semantic_graph.py   # Code relationship graph
+│   └── vector_store.py     # ChromaDB semantic search wrapper
+│
+├── preview/
+│   └── server.py          # Interactive preview server (port 7420)
+│
+├── workflows/
+│   └── agentic_workflow.py # PLANNING→EXECUTING→VERIFYING→ITERATING state machine
 │
 ├── repl/
 │   └── prompt_toolkit_input.py  # Vim keys + mouse support + Shift+Tab
@@ -507,6 +528,9 @@ src/draguniteus/
 │
 ├── refactor/
 │   └── autonomous.py       # Large-scale refactor planner + rollback executor
+│
+├── diff/
+│   └── viewer.py           # Side-by-side diff rendering
 │
 ├── voice/
 │   ├── input.py            # Voice listener

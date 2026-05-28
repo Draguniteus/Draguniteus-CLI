@@ -2,12 +2,18 @@
 
 Tools are stored in .draguniteus/custom_tools/ as JSON schemas
 and loaded into TOOL_MAP on startup.
+
+Built-in handlers: bash, python, http
 """
 from __future__ import annotations
 
 import json
 import os
 import platform
+import subprocess
+import sys
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +31,103 @@ def _get_config_dir() -> Path:
 CUSTOM_TOOLS_DIR = _get_config_dir() / "custom_tools"
 
 
+# ---------------------------------------------------------------------------
+# Built-in handlers for dynamically created tools
+# ---------------------------------------------------------------------------
+
+def _bash_handler(tool_name: str, args: dict[str, Any]) -> str:
+    """Handler for bash-type custom tools. Runs a shell command."""
+    cmd = args.get("command", "")
+    if not cmd:
+        return "[Error] No command provided"
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        out = result.stdout or ""
+        err = result.stderr or ""
+        if result.returncode != 0:
+            return f"[Error] Exit {result.returncode}\n{err}\n{out}".strip()
+        return (out + "\n" + err).strip() or "[OK] Command succeeded with no output"
+    except subprocess.TimeoutExpired:
+        return "[Error] Command timed out after 60s"
+    except Exception as e:
+        return f"[Error] {e}"
+
+
+def _python_handler(tool_name: str, args: dict[str, Any]) -> str:
+    """Handler for python-type custom tools. Executes Python code."""
+    code = args.get("code", "")
+    if not code:
+        return "[Error] No code provided"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        out = result.stdout or ""
+        err = result.stderr or ""
+        if result.returncode != 0:
+            return f"[Error] Exit {result.returncode}\n{err}\n{out}".strip()
+        return (out + "\n" + err).strip() or "[OK] Code executed with no output"
+    except subprocess.TimeoutExpired:
+        return "[Error] Code execution timed out after 30s"
+    except Exception as e:
+        return f"[Error] {e}"
+
+
+def _http_handler(tool_name: str, args: dict[str, Any]) -> str:
+    """Handler for http-type custom tools. Makes an HTTP request."""
+    url = args.get("url", "")
+    method = args.get("method", "GET").upper()
+    body = args.get("body", "")
+    headers_str = args.get("headers", "")
+
+    if not url:
+        return "[Error] No URL provided"
+
+    headers = {}
+    if headers_str:
+        for line in headers_str.split("\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers[k.strip()] = v.strip()
+
+    try:
+        req = urllib.request.Request(url, method=method, headers=headers)
+        if body:
+            req.data = body.encode("utf-8")
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            status = resp.status
+            resp_body = resp.read().decode("utf-8", errors="replace")
+            return f"[{status}]\n{resp_body[:2000]}"
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        return f"[HTTP {e.code}]\n{body[:1000]}"
+    except urllib.error.URLError as e:
+        return f"[Error] {e.reason}"
+    except Exception as e:
+        return f"[Error] {e}"
+
+
+_TOOL_HANDLERS: dict[str, callable] = {
+    "bash": _bash_handler,
+    "python": _python_handler,
+    "http": _http_handler,
+}
+
+
+# ---------------------------------------------------------------------------
+# ToolBuilder
+# ---------------------------------------------------------------------------
+
 class ToolBuilder:
     """Builds and registers custom tools dynamically."""
 
@@ -38,8 +141,9 @@ class ToolBuilder:
         name: str,
         description: str,
         input_schema: dict[str, Any],
-        handler_fn: callable,
+        handler_fn: callable | None = None,
         tags: list[str] | None = None,
+        handler_type: str | None = None,
     ) -> str:
         """Create and register a new tool.
 
@@ -49,18 +153,29 @@ class ToolBuilder:
             input_schema: Anthropic-style input schema
             handler_fn: function to call when tool is invoked
             tags: optional tags for categorization
+            handler_type: built-in handler type ("bash", "python", "http")
+                          if no handler_fn provided
 
         Returns:
-            The tool name that was registered.
+            The tool name that was registered, or error message.
         """
         if name in self._handlers:
             return f"Tool '{name}' already exists"
+
+        if handler_fn is None and handler_type:
+            handler_fn = _TOOL_HANDLERS.get(handler_type)
+            if handler_fn is None:
+                return f"Unknown handler type: {handler_type}. Valid: bash, python, http"
+
+        if handler_fn is None:
+            return "No handler provided"
 
         tool_schema = {
             "name": name,
             "description": description,
             "input_schema": input_schema,
             "tags": tags or [],
+            "handler_type": handler_type,
         }
 
         self._tools[name] = tool_schema

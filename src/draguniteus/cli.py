@@ -3144,15 +3144,114 @@ def _cmd_tools(arg: str, messages: list[dict], session: Session) -> bool:
             _print(gray("[D] No custom tools registered"))
         else:
             _print(gray(f"[D] Custom tools: {', '.join(tools)}"))
-    elif cmd == "create" and len(parts) > 1:
-        _print(gray("[D] Usage: /tools create <name> <description> <schema_json> — use register_custom_tool() in code instead"))
+    elif cmd == "create":
+        # /tools create <name> <type> <description> [--command "<cmd>"] [--code "<python>"] [--url "<url>"] [--method <GET|POST>] [--headers "<hdrs>"]
+        import shlex
+        try:
+            tokens = shlex.split(arg)
+        except Exception:
+            tokens = arg.split()
+
+        if len(tokens) < 3:
+            _print(gray("[D] Usage: /tools create <name> <type> <description> [--command '<cmd>'] [--code '<python>'] [--url '<url>'] [--method GET|POST]"))
+            _print(gray("[D] Types: bash, python, http"))
+            return True
+
+        name = tokens[0]
+        tool_type = tokens[1].lower()
+        description = tokens[2]
+
+        if tool_type not in ("bash", "python", "http"):
+            _print(gray(f"[D] Unknown tool type: {tool_type}. Valid: bash, python, http"))
+            return True
+
+        # Extract named flags
+        cmd_val = None
+        code_val = None
+        url_val = None
+        method_val = "GET"
+        headers_val = None
+        body_val = None
+
+        i = 3
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "--command" and i + 1 < len(tokens):
+                cmd_val = tokens[i + 1]
+                i += 2
+            elif tok == "--code" and i + 1 < len(tokens):
+                code_val = tokens[i + 1]
+                i += 2
+            elif tok == "--url" and i + 1 < len(tokens):
+                url_val = tokens[i + 1]
+                i += 2
+            elif tok == "--method" and i + 1 < len(tokens):
+                method_val = tokens[i + 1].upper()
+                i += 2
+            elif tok == "--headers" and i + 1 < len(tokens):
+                headers_val = tokens[i + 1]
+                i += 2
+            elif tok == "--body" and i + 1 < len(tokens):
+                body_val = tokens[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        # Build schema and handler based on type
+        builder = get_tool_builder()
+        if tool_type == "bash":
+            if not cmd_val:
+                _print(gray("[D] Missing --command flag"))
+                return True
+            schema = {
+                "name": {"type": "string", "description": "Shell command to execute"},
+                "command": {"type": "string", "description": "The shell command"},
+            }
+            result = builder.create_tool(
+                name, description, schema,
+                handler_type="bash", tags=["custom", "bash"]
+            )
+        elif tool_type == "python":
+            if not code_val:
+                _print(gray("[D] Missing --code flag"))
+                return True
+            schema = {
+                "code": {"type": "string", "description": "Python code to execute"},
+            }
+            result = builder.create_tool(
+                name, description, schema,
+                handler_type="python", tags=["custom", "python"]
+            )
+        elif tool_type == "http":
+            if not url_val:
+                _print(gray("[D] Missing --url flag"))
+                return True
+            schema = {
+                "url": {"type": "string", "description": "HTTP URL"},
+                "method": {"type": "string", "description": "HTTP method (GET/POST/PUT/DELETE)", "default": method_val},
+                "body": {"type": "string", "description": "Request body"},
+                "headers": {"type": "string", "description": "HTTP headers (one per line, format: Key: Value)"},
+            }
+            result = builder.create_tool(
+                name, description, schema,
+                handler_type="http", tags=["custom", "http"]
+            )
+
+        if result == name:
+            _print(print_success(f"Tool '{name}' created ({tool_type})"))
+        else:
+            _print(gray(f"[D] {result}"))
+        return True
     elif cmd == "delete" and len(parts) > 1:
         name = parts[1]
         builder = get_tool_builder()
         builder.delete_tool(name)
         _print(gray(f"[D] Tool '{name}' deleted"))
     else:
-        _print(gray("[D] Usage: /tools stats | list | delete <name>"))
+        _print(gray("[D] Usage: /tools stats | list | create | delete <name>"))
+        _print(gray("[D]   /tools create <name> bash '<desc>' --command '<cmd>'"))
+        _print(gray("[D]   /tools create <name> python '<desc>' --code '<python>'"))
+        _print(gray("[D]   /tools create <name> http '<desc>' --url '<url>'"))
 
     return True
 

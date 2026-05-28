@@ -25,7 +25,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from draguniteus.theming import (
-    CYAN, DIM, ORANGE, RESET, WHITE, BLUE,
+    CYAN, DIM, ORANGE, RESET, WHITE, BLUE, RED, GREEN, YELLOW,
     get_thinking_verb, THINKING_VERBS,
 )
 
@@ -233,6 +233,81 @@ class StreamingDisplay:
             sys.stdout.buffer.flush()
         except Exception:
             pass
+
+    def show_output(self, output: str, title: str = "output", max_lines: int = 200) -> None:
+        """Stream command output inline — colorized by type.
+
+        Args:
+            output: raw stdout/stderr from a command
+            title: label for this output block (e.g., "output", "errors")
+            max_lines: cap on lines to display (prevents token bloat)
+        """
+        if not output or not self.full_drama:
+            return
+
+        lines = output.split("\n")
+        total = len(lines)
+        display_lines = lines[:max_lines]
+        truncated = total > max_lines
+
+        try:
+            # Header with line count
+            dim = DIM
+            reset = RESET
+            cyan = CYAN
+            header = f"\n  {cyan}--- {title} ({total} line{'s' if total != 1 else ''}) ---{reset}\n"
+            sys.stdout.buffer.write(header.encode('utf-8', errors='replace'))
+
+            # Colorize based on output characteristics
+            for i, line in enumerate(display_lines):
+                line = line.rstrip("\r")
+                if not line:
+                    # Empty line — preserve spacing
+                    sys.stdout.buffer.write(f"  \n".encode('utf-8', errors='replace'))
+                    continue
+
+                # Detect line type for coloring
+                if any(k in line for k in ["error", "ERROR", "failed", "FAILED", "FAIL"]):
+                    color = RED
+                elif any(k in line for k in ["warning", "WARNING", "WARN", "deprecated"]):
+                    color = YELLOW
+                elif any(k in line for k in ["pass", "PASS", "ok", "OK", "success", "SUCCESS"]):
+                    color = GREEN
+                elif line.startswith("+") or line.startswith(">"):
+                    color = CYAN  # diff/addition lines
+                elif line.startswith("---") or line.startswith("==="):
+                    color = DIM  # separator lines
+                elif "│" in line or "└" in line or "┌" in line or "├" in line:
+                    color = CYAN  # box-drawing / tree lines
+                else:
+                    color = WHITE
+
+                try:
+                    sys.stdout.buffer.write(f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
+                except Exception:
+                    # Fallback for non-colorable content
+                    sys.stdout.buffer.write(f"  {line}\n".encode('utf-8', errors='replace'))
+
+                # Flush every 50 lines for streaming effect on large outputs
+                if i > 0 and i % 50 == 0:
+                    sys.stdout.buffer.flush()
+
+            if truncated:
+                footer = f"  {DIM}... ({total - max_lines} more lines) ...{reset}\n"
+                sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
+
+            footer = f"  {cyan}--- end ---{reset}\n"
+            sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
+
+        except Exception:
+            # Fallback: print raw output
+            try:
+                for line in display_lines[:20]:
+                    sys.stdout.buffer.write(f"{line}\n".encode('utf-8', errors='replace'))
+                sys.stdout.buffer.flush()
+            except Exception:
+                pass
 
     def set_search_context(self, patterns: list[str], files_reading: list[str], current_file: str = "") -> None:
         """Set search context for display.

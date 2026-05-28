@@ -1013,20 +1013,33 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                     for i, tr in enumerate(tool_results, 1):
                         name = tr.get("tool", "?")
                         result = str(tr.get("result", ""))
-                        # Print tool name as sub-item
-                        try:
-                            sys.stdout.write(f"\n{dim_color}⎿ {name}{reset}\n")
-                        except UnicodeEncodeError:
-                            sys.stdout.write(f"\n> {name}\n")
-                        # Print first 50 lines of result
-                        lines = result.split('\n')
-                        for ln in lines[:50]:
+
+                        # Use colorized streaming output for Bash commands with substantial output
+                        if name == "Bash" and len(result) > 2048:
                             try:
-                                sys.stdout.write(f"  {ln}\n")
+                                display.show_output(result, title=f"{name} output")
+                            except Exception:
+                                # Fallback for non-display cases
+                                for ln in result.split('\n')[:50]:
+                                    try:
+                                        sys.stdout.write(f"  {ln}\n")
+                                    except UnicodeEncodeError:
+                                        sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                        else:
+                            # Print tool name as sub-item (existing behavior)
+                            try:
+                                sys.stdout.write(f"\n{dim_color}⎿ {name}{reset}\n")
                             except UnicodeEncodeError:
-                                sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
-                        if len(lines) > 50:
-                            sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
+                                sys.stdout.write(f"\n> {name}\n")
+                            # Print first 50 lines of result
+                            lines = result.split('\n')
+                            for ln in lines[:50]:
+                                try:
+                                    sys.stdout.write(f"  {ln}\n")
+                                except UnicodeEncodeError:
+                                    sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                            if len(lines) > 50:
+                                sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
                     sys.stdout.flush()
 
             # Print response with bullet prefix (inside Rich.Live panel already shown, but need clean final output)
@@ -1243,12 +1256,24 @@ def _read_input() -> str:
                             i += 1
                             name = tr.get("tool", "?")
                             result = str(tr.get("result", ""))
-                            sys.stdout.write(f"  [{i}/{len(_last_tool_results)}] {name}\n")
-                            lines = result.split('\n')
-                            for ln in lines[:100]:
-                                sys.stdout.write(f"    {ln}\n")
-                            if len(lines) > 100:
-                                sys.stdout.write(f"    [...+ {len(lines) - 100} lines]\n")
+                            # Use colorized streaming for large Bash outputs
+                            if name == "Bash" and len(result) > 2048:
+                                try:
+                                    from draguniteus.streaming_display import StreamingDisplay
+                                    disp = StreamingDisplay(console, _full_drama)
+                                    disp.show_output(result, title=f"{name} output")
+                                except Exception:
+                                    for ln in result.split('\n')[:100]:
+                                        sys.stdout.write(f"    {ln}\n")
+                                    if len(result.split('\n')) > 100:
+                                        sys.stdout.write(f"    [...+ {len(result.split(chr(10))) - 100} lines]\n")
+                            else:
+                                sys.stdout.write(f"  [{i}/{len(_last_tool_results)}] {name}\n")
+                                lines = result.split('\n')
+                                for ln in lines[:100]:
+                                    sys.stdout.write(f"    {ln}\n")
+                                if len(lines) > 100:
+                                    sys.stdout.write(f"    [...+ {len(lines) - 100} lines]\n")
                         sys.stdout.write("=" * 68 + "\n")
                     else:
                         sys.stdout.write("\r  (no tool results to expand)\n")

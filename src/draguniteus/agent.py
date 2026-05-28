@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Iterator
 
 from rich.console import Console
@@ -345,7 +346,94 @@ def execute_tool_calls(
     except Exception:
         pass
 
+    # --- Parallel execution for independent read-only tools ---
+    # Tools that are read-only and have no side effects — safe to parallelize
+    _PARALLELIZABLE_TOOLS = frozenset(["Read", "Glob", "Grep", "WebSearch", "WebFetch", "InspectEnvironment"])
+
+    parallel_tcs = []
+    sequential_tcs = []
     for tc in pending_tool_calls:
+        name = tc.get("name", "")
+        if name in _PARALLELIZABLE_TOOLS and not name.startswith("mcp__"):
+            parallel_tcs.append(tc)
+        else:
+            sequential_tcs.append(tc)
+
+    def _exec_one(tc: dict, ne: Any) -> dict:
+        """Execute a single tool call. Extracted for ThreadPoolExecutor."""
+        name = tc.get("name", "")
+        args = tc.get("args", "")
+        import json
+        try:
+            parsed = json.loads(args) if args else {}
+        except json.JSONDecodeError:
+            parsed = {"raw": args}
+
+        if name.startswith("mcp__"):
+            if ne:
+                try:
+                    result = ne._call_mcp_tool(
+                        type("Node", (), {"name": name, "args": parsed, "depth": 0, "id": name})()
+                    )
+                except Exception as e:
+                    result = f"MCP tool error: {e}"
+            else:
+                result = f"MCP tool error: nested executor not available"
+            return {"tool": name, "result": result, "success": not str(result or "").startswith("MCP tool error"), "parsed": parsed}
+
+        tool_fn = TOOL_MAP.get(name)
+        if tool_fn:
+            try:
+                result = tool_fn(**parsed)
+            except Exception as e:
+                result = f"Tool error: {e}"
+        else:
+            result = f"Unknown tool: {name}"
+
+        return {
+            "tool": name,
+            "result": result,
+            "success": result and not str(result).startswith("Tool error") and not str(result).startswith("Unknown tool"),
+            "parsed": parsed,
+        }
+
+    # Execute parallel group via ThreadPoolExecutor
+    if len(parallel_tcs) > 1:
+        results_map: dict[int, dict] = {}
+        with ThreadPoolExecutor(max_workers=min(len(parallel_tcs), 4)) as pool:
+            futures = {pool.submit(_exec_one, tc, nested_executor): i for i, tc in enumerate(parallel_tcs)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    results_map[idx] = fut.result()
+                except Exception as e:
+                    results_map[idx] = {"tool": parallel_tcs[idx].get("name", "?"),
+                                       "result": f"Thread error: {e}", "success": False, "parsed": {}}
+
+        for i, tc in enumerate(parallel_tcs):
+            r = results_map.get(i, {"tool": tc.get("name", "?"), "result": "", "success": False, "parsed": {}})
+            tool_results.append({"tool": r["tool"], "result": r["result"], "success": r["success"]})
+            if reflection:
+                reflection.record_result(r["tool"], r["success"], str(r["result"])[:200] if not r["success"] else "")
+            if self_correction and tc.get("name") in ("Write", "Edit"):
+                try:
+                    fp = r["parsed"].get("file_path", "")
+                    content = r["parsed"].get("content", "")
+                    if content and fp:
+                        self_correction.record_write(fp, content, tc.get("name"))
+                except Exception:
+                    pass
+
+    elif parallel_tcs:
+        # Single parallel tool — run in-thread, no ThreadPool needed
+        tc = parallel_tcs[0]
+        r = _exec_one(tc, nested_executor)
+        tool_results.append({"tool": r["tool"], "result": r["result"], "success": r["success"]})
+        if reflection:
+            reflection.record_result(r["tool"], r["success"], str(r["result"])[:200] if not r["success"] else "")
+
+    # Execute sequential tools in order (Write/Edit/Bash/Git must be serial for correctness)
+    for tc in sequential_tcs:
         name = tc.get("name")
         args = tc.get("args", "")
         import json
@@ -356,7 +444,6 @@ def execute_tool_calls(
 
         _track_tool_files(name, parsed)
 
-        # Record tool start in reflection
         if reflection:
             reflection.record_start(name)
 
@@ -387,7 +474,6 @@ def execute_tool_calls(
                 reflection.record_result(name, success, str(result)[:200] if not success else "")
             tool_results.append({"tool": name, "result": result, "success": success})
 
-            # Record Write/Edit for self-correction
             if self_correction and name in ("Write", "Edit"):
                 try:
                     file_path = parsed.get("file_path", "")
@@ -427,7 +513,6 @@ def execute_tool_calls(
         else:
             result = f"Unknown tool: {name}"
 
-        # Record tool result in reflection
         success = result and not str(result).startswith("Tool error") and not str(result).startswith("Unknown tool")
         if reflection:
             reflection.record_result(name, success, str(result)[:200] if not success else "")
@@ -452,7 +537,6 @@ def execute_tool_calls(
             except Exception:
                 pass
 
-        # Self-correction: record Write/Edit for verification
         if self_correction and name in ("Write", "Edit"):
             try:
                 file_path = parsed.get("file_path", "")

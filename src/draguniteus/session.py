@@ -20,6 +20,9 @@ class Session:
     working_dir: str
     transcript_path: str
     notes: list[str] | None = None
+    branch_from: str | None = None  # session_id this was branched from
+    branch_name: str | None = None  # name of this branch
+    parent_id: str | None = None    # direct parent session (None if root)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -102,6 +105,65 @@ class SessionStore:
         transcript_path = Path(session.transcript_path)
         with open(transcript_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def branch_session(self, session_id: str, branch_name: str, model: str | None = None) -> Session | None:
+        """Create a new branch from an existing session.
+
+        The new session retains a link to its parent (branch_from).
+        Useful for exploring alternative approaches without losing the original path.
+        """
+        parent = self.get(session_id)
+        if not parent:
+            return None
+
+        sid = f"sess_{uuid.uuid4().hex[:12]}"
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # New transcript for the branch
+        new_transcript_path = str(self.transcripts_dir / f"{sid}.jsonl")
+
+        branch = Session(
+            id=sid,
+            created_at=now,
+            last_updated=now,
+            model=model or parent.model,
+            working_dir=str(Path.cwd()),
+            transcript_path=new_transcript_path,
+            notes=[f" branched from {session_id}"],
+            branch_from=session_id,
+            branch_name=branch_name,
+            parent_id=session_id,
+        )
+        self._sessions.append(branch)
+        self._save()
+
+        # Copy parent's transcript to new session (preserving history)
+        parent_transcript = Path(parent.transcript_path)
+        if parent_transcript.exists():
+            try:
+                content = parent_transcript.read_text(encoding="utf-8")
+                new_transcript = Path(new_transcript_path)
+                new_transcript.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
+        return branch
+
+    def get_branch_children(self, session_id: str) -> list["Session"]:
+        """Get all sessions that were branched from this session."""
+        return [s for s in self._sessions if s.branch_from == session_id]
+
+    def get_ancestors(self, session_id: str) -> list["Session"]:
+        """Get the full ancestor chain of a session (root to parent)."""
+        ancestors = []
+        current = self.get(session_id)
+        while current and current.parent_id:
+            parent = self.get(current.parent_id)
+            if parent:
+                ancestors.append(parent)
+                current = parent
+            else:
+                break
+        return list(reversed(ancestors))
 
     def load_transcript(self, session: Session) -> list[dict[str, Any]]:
         """Load full transcript for a session."""

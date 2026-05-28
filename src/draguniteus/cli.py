@@ -101,7 +101,7 @@ def _get_slash_command_completions() -> list[str]:
         "agents", "new", "reset", "exit", "quit", "recap",
         "release-notes", "usage", "btw", "style", "worktree",
         "tasks", "transcript", "background", "vim", "skills", "skill",
-        "agent",
+        "agent", "session",
         "orchestrate", "review", "index", "voice",
         "diff", "inspect", "info", "doctor",
     ]
@@ -1450,6 +1450,7 @@ def _handle_slash_command(cmd: str, messages: list[dict], session: Session) -> b
         "diff": _cmd_diff,
         "submit": _cmd_submit,
         "resume": _cmd_resume,
+        "session": _cmd_session,
         "context": _cmd_context,
         "model": _cmd_model,
         "patch": _cmd_patch,
@@ -2663,6 +2664,62 @@ def _cmd_submit(arg: str, messages: list[dict], session: Session) -> bool:
     else:
         _print(print_success(f"[D] Changes committed: {commit_result[:200]}"))
 
+    return True
+
+
+def _cmd_session(arg: str, messages: list[dict], session: Session) -> bool:
+    """Session management: list, branch, info. /session [list|branch <id> <name>|info <id>]"""
+    from draguniteus.session import SessionStore
+    store = SessionStore()
+    parts = arg.strip().split()
+
+    if not parts or parts[0] == "list":
+        _print(gray("[D] Sessions:"))
+        all_sessions = store.list_all()
+        for s in all_sessions[-10:]:
+            branch_info = f" (branch: {s.branch_name})" if s.branch_name else ""
+            parent_info = f" <- {s.branch_from}" if s.branch_from else ""
+            _print(gray(f"  {s.id} [{s.model}]{branch_info}{parent_info} @ {s.working_dir[-30:]}"))
+        _print(gray(f"\n  Total: {len(all_sessions)} sessions"))
+        return True
+
+    if parts[0] == "branch" and len(parts) >= 3:
+        parent_id = parts[1]
+        branch_name = parts[2]
+        new_session = store.branch_session(parent_id, branch_name)
+        if new_session:
+            _print(gray(f"[D] Created branch '{branch_name}' from {parent_id} -> {new_session.id}"))
+        else:
+            _print(gray(f"[D] Could not find session {parent_id}"))
+        return True
+
+    if parts[0] == "info" and len(parts) >= 2:
+        sid = parts[1]
+        sess = store.get(sid)
+        if sess:
+            _print(gray(f"  ID: {sess.id}"))
+            _print(gray(f"  Model: {sess.model}"))
+            _print(gray(f"  Created: {sess.created_at}"))
+            _print(gray(f"  Last updated: {sess.last_updated}"))
+            _print(gray(f"  Working dir: {sess.working_dir}"))
+            if sess.branch_name:
+                _print(gray(f"  Branch: {sess.branch_name}"))
+            if sess.branch_from:
+                ancestors = store.get_ancestors(sess.id)
+                _print(gray(f"  Parent: {sess.branch_from}"))
+                if ancestors:
+                    ancestor_ids = " -> ".join(a.id for a in ancestors)
+                    _print(gray(f"  Ancestors: {ancestor_ids}"))
+            children = store.get_branch_children(sess.id)
+            if children:
+                _print(gray(f"  Branches: {', '.join(c.id for c in children)}"))
+        else:
+            _print(gray(f"[D] Session {sid} not found"))
+        return True
+
+    _print(gray("[D] /session list — show recent sessions"))
+    _print(gray("[D] /session branch <session_id> <name> — create a new branch"))
+    _print(gray("[D] /session info <session_id> — show session details"))
     return True
 
 

@@ -231,6 +231,20 @@ Draguniteus proves this stack works by running all four models simultaneously on
 
 ---
 
+## Known Limitations
+
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| ChromaDB requires `pip install chromadb` | Not zero-dependency | Falls back to file-based memory if not installed |
+| Self-correction maxes at 3 iterations | Complex bugs surface to user | Increase via `max_iterations` config |
+| Nested tool depth limited to 5 levels | Very deep call stacks truncated | Flatten tool design where possible |
+| Message truncation keeps last 50 turns | Older context may be forgotten | Periodic summary injection planned |
+| Checkpoint saves add ~150ms overhead | Latency on every 5th turn | Batch writes when possible |
+| Windows: PowerShell execution policy | Scripts may be blocked | Use `-Bypass` flag or `Set-ExecutionPolicy` |
+| MiniMax API key required | Not usable without API access | Set `MINIMAX_API_KEY` environment variable |
+
+---
+
 ## Quick Start
 
 ```bash

@@ -217,7 +217,7 @@ When executing tools, wait for results before continuing.
 When you need user approval for a risky action, say so clearly."""
 
 
-def _get_system_prompt() -> str:
+def _get_system_prompt(messages: list[dict] | None = None) -> str:
     global _system_prompt_override, _append_system_prompt, _bare_mode, _style_name
 
     if _system_prompt_override:
@@ -234,8 +234,16 @@ def _get_system_prompt() -> str:
         style_mgr = get_style_manager()
         base = style_mgr.apply_style(_style_name, base)
 
-    # Inject memory
-    memory = memory_manager.load_for_agent()
+    # Extract last user message for vector memory search
+    query = None
+    if messages:
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                query = str(m.get("content", ""))[:200]
+                break
+
+    # Inject memory (with semantic search query if available)
+    memory = memory_manager.load_for_agent(query=query)
     if memory:
         base = base + "\n\n" + memory
 
@@ -531,11 +539,22 @@ def main(
         except Exception:
             pass
 
-        response_text, tool_results, in_tok, out_tok, thinking = run_one_turn(_client, messages, _get_system_prompt(), _cfg, _full_drama)
+        response_text, tool_results, in_tok, out_tok, thinking = run_one_turn(_client, messages, _get_system_prompt(messages), _cfg, _full_drama)
         elapsed = time.time() - start
 
         # Clear active background task after turn completes
         _active_bg_task = None
+
+        # --- Self-improvement critique after turn ---
+        if tool_results and getattr(cfg, 'self_improvement_enabled', True):
+            try:
+                from draguniteus.self_improvement import get_self_improvement_engine
+                engine = get_self_improvement_engine()
+                last_task = user_input[:200] if user_input else "unknown"
+                outcome = "success" if all(tr.get("success", True) for tr in tool_results) else "partial"
+                engine.critique(last_task, tool_results, messages[-20:], outcome)
+            except Exception:
+                pass
 
         # Track and check budget
         if _max_budget is not None:
@@ -778,7 +797,7 @@ def _handle_btw(question: str, session: Session | None) -> None:
         stream = client.stream(
             messages=btw_messages,
             tools=[],
-            system=_get_system_prompt(),
+            system=_get_system_prompt(btw_messages),
         )
         handler = StreamHandler(None, False)
         for event in stream:
@@ -883,7 +902,7 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
     files_reading: list[str] = []
 
     # Stream with progressive display
-    for text, thinking, tool_calls, is_final in stream_one_turn(client, messages, _get_system_prompt(), cfg, _full_drama):
+    for text, thinking, tool_calls, is_final in stream_one_turn(client, messages, _get_system_prompt(messages), cfg, _full_drama):
         # Update accumulated values
         if thinking:
             thinking_text = thinking
@@ -1420,6 +1439,8 @@ def _handle_slash_command(cmd: str, messages: list[dict], session: Session) -> b
         "checkpoint": _cmd_checkpoint,
         "tools": _cmd_tools,
         "critique": _cmd_critique,
+        "arena": _cmd_arena,
+        "git": _cmd_git,
     }
 
     handler = handlers.get(name)
@@ -1691,27 +1712,49 @@ def _cmd_exit(arg: str, messages: list[dict], session: Session) -> bool:
 
 def _cmd_effort(arg: str, messages: list[dict], session: Session) -> bool:
     global _cfg
-    levels = {"low", "medium", "high", "xhigh", "max"}
+    levels = {"low", "medium", "high", "xhigh", "max", "auto"}
     if not arg or arg.lower() not in levels:
-        console.print(gray(f"Usage: /effort {'|'.join(levels)}"))
+        _print(gray(f"Usage: /effort {'|'.join(sorted(levels))}"))
         return True
 
     level = arg.lower()
+
+    if level == "auto":
+        try:
+            from draguniteus.thinking_router import get_thinking_router
+            router = get_thinking_router()
+            if messages:
+                routing = router.route(messages, "")
+                if routing.get("thinking"):
+                    effective = "high"
+                    _print(gold("[D] Effort auto -> high (task needs deep reasoning)"))
+                else:
+                    effective = "medium"
+                    _print(gold("[D] Effort auto -> medium (direct task)"))
+                _print(gray(f"    Detected: {routing.get('reason', '')}"))
+                if _cfg:
+                    _cfg.set_effort(effective)
+            else:
+                _print(gray("[D] Effort auto: no messages yet to analyze"))
+        except Exception as e:
+            _print(gray(f"[D] Effort auto unavailable: {e}"))
+        return True
+
     if _cfg and _cfg.set_effort(level):
         settings = _cfg.get_effort_settings()
         max_t = settings.get("max_tokens", 8192)
         betas = settings.get("betas", [])
         thinking = settings.get("thinking", False)
 
-        console.print(gold(f"[D] Effort set to: {level}"))
-        console.print(gray(f"    max_tokens: {max_t}"))
-        console.print(gray(f"    thinking enabled: {thinking}"))
+        _print(gold(f"[D] Effort set to: {level}"))
+        _print(gray(f"    max_tokens: {max_t}"))
+        _print(gray(f"    thinking enabled: {thinking}"))
         if betas:
-            console.print(gray(f"    betas: {', '.join(betas)}"))
+            _print(gray(f"    betas: {', '.join(betas)}"))
         else:
-            console.print(gray(f"    betas: none"))
+            _print(gray(f"    betas: none"))
     else:
-        console.print(gray(f"[D] Effort set to: {level} (session only)"))
+        _print(gray(f"[D] Effort set to: {level} (session only)"))
     return True
 
 
@@ -2225,7 +2268,7 @@ def _cmd_orchestrate(arg: str, messages: list[dict], session: Session) -> bool:
         _print(gray("[D] Multi-Agent Orchestrator"))
         _print(gray("  /orchestrate <task> --agent <name> --task <subtask> [--agent ...]"))
         _print(gray("  Use multiple --agent/--task pairs for parallel subtasks."))
-        _print(gray("  Models: MiniMax-M2.7 (reasoning), MiniMax-M2.5 (balanced), MiniMax-M2.1 (fast)"))
+        _print(gray("  Models: MiniMax-M2.7 (reasoning), MiniMax-M2.5 (code), MiniMax-M2.1 (fast)"))
         return True
 
     parts = arg.split("--agent")
@@ -2667,8 +2710,8 @@ def _cmd_model(arg: str, messages: list[dict], session: Session) -> bool:
 
     if "--list" in parts or not parts:
         _print(gray("[D] Available models:"))
-        models = ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2"]
-        for m in models:
+        from draguniteus.config import MINIMAX_MODELS
+        for m in MINIMAX_MODELS:
             current = " (current)" if str(_cfg.model) == m else ""
             _print(gray(f"  - {m}{current}"))
         return True
@@ -2676,6 +2719,10 @@ def _cmd_model(arg: str, messages: list[dict], session: Session) -> bool:
     # Set model
     new_model = parts[0]
     old_model = str(_cfg.model)
+    from draguniteus.config import MINIMAX_MODELS
+    if new_model not in MINIMAX_MODELS:
+        _print(gray(f"[D] Unknown model: {new_model}. Available: {', '.join(MINIMAX_MODELS)}"))
+        return True
     try:
         _cfg._raw["model"] = new_model
         _print(gray(f"[D] Model changed: {old_model} → {new_model}"))
@@ -3028,6 +3075,53 @@ def _cmd_tools(arg: str, messages: list[dict], session: Session) -> bool:
     return True
 
 
+
+def _cmd_git(arg: str, messages: list[dict], session: Session) -> bool:
+    """Git commands and auto-commit. /git [status|commit <msg>|push|auto]"""
+    from draguniteus.tools.git import tool_git_status, tool_git_auto_commit, tool_git_push
+
+    if not arg.strip():
+        _print(gray('[D] /git status | commit <msg> | push | auto'))
+        return True
+
+    parts = arg.split(maxsplit=1)
+    subcmd = parts[0].lower() if parts else ''
+    msg = parts[1].strip() if len(parts) > 1 else ''
+
+    try:
+        if subcmd == 'status':
+            result = tool_git_status()
+            _print(gray(result))
+        elif subcmd == 'commit' and msg:
+            from draguniteus.tools.git import tool_git_commit, _run_git
+            result = _run_git(['commit', '-m', msg])
+            _print(gray(result))
+        elif subcmd == 'push':
+            result = tool_git_push()
+            _print(gray(result))
+        elif subcmd == 'auto':
+            result = tool_git_auto_commit()
+            _print(gray(result))
+        elif subcmd == 'log':
+            import subprocess
+            result = subprocess.run(['git', 'log', '--oneline', '-10'], capture_output=True, text=True).stdout
+            _print(gray(result or 'No commits yet.'))
+        elif subcmd == 'branch':
+            import subprocess
+            result = subprocess.run(['git', 'branch', '-v'], capture_output=True, text=True).stdout.encode('cp1252', errors='replace').decode('cp1252')
+            _print(gray(result or 'No branches.'))
+        elif subcmd == 'stash':
+            import subprocess
+            result = subprocess.run(['git', 'stash'], capture_output=True, text=True).stdout
+            _print(gray(result or 'Stashed.'))
+        else:
+            _print(gray('[D] Usage: /git status | commit <msg> | push | auto | log | branch | stash'))
+    except Exception as e:
+        _print(gray(f'[D] Git error: {e}'))
+
+    return True
+
+
 def _cmd_critique(arg: str, messages: list[dict], session: Session) -> bool:
     """Run self-critique on the last task. /critique"""
     try:
@@ -3064,6 +3158,129 @@ def _cmd_critique(arg: str, messages: list[dict], session: Session) -> bool:
         _print(gray("[D] No critique available"))
 
     return True
+
+
+
+
+def _cmd_arena(arg: str, messages: list[dict], session: Session) -> bool:
+    """Run head-to-head model comparison. /arena <task> [model1] [model2] ..."""
+    from draguniteus.config import MINIMAX_MODELS
+    from draguniteus.tui.arena import ArenaMode
+    import threading
+
+    if not arg.strip():
+        _print(gray('[D] Arena Mode: head-to-head model comparison'))
+        _print(gray('  /arena <task> compare all MiniMax models'))
+        _print(gray('  /arena <task> M2.7 M2 compare specific models'))
+        _print(gray('  Available models: ' + ', '.join(MINIMAX_MODELS)))
+        return True
+
+    parts = arg.split()
+    if len(parts) < 1:
+        _print(gray('[D] Usage: /arena <task> [model1] [model2] ...'))
+        return True
+
+    task = parts[0]
+    model_args = [p for p in parts[1:] if p in MINIMAX_MODELS]
+    if model_args:
+        selected_models = model_args
+    else:
+        selected_models = MINIMAX_MODELS
+
+    if len(selected_models) < 2:
+        _print(gray('[D] Need at least 2 models for arena. Available: ' + ', '.join(MINIMAX_MODELS)))
+        return True
+
+    try:
+        arena = ArenaMode()
+        agents = [
+            {'name': f'Agent-{m}', 'model': m, 'task': task}
+            for m in selected_models
+        ]
+        arena.start(agents=agents)
+        _print(gold(f'[D] Arena Mode: {len(selected_models)} models competing on: {task}'))
+
+        # Build AgentSpec for each model — same task, different model
+        from draguniteus.orchestrator import MultiAgentOrchestrator, AgentSpec
+        from draguniteus.config import Config
+
+        cfg = Config()
+        orchestrator = MultiAgentOrchestrator(cfg)
+
+        specs = [
+            AgentSpec(
+                name=f'Agent-{m}',
+                task=task,
+                model=m,
+                max_turns=10,
+                timeout_seconds=180.0,
+            )
+            for m in selected_models
+        ]
+
+        # Convert arena's update/finalize into progress callback
+        def arena_progress(agent_name: str, partial_text: str, thinking: str,
+                          tool_count: int, done: bool):
+            if done:
+                arena.finalize(agent_name, final_text=partial_text[:200])
+            else:
+                arena.update(agent_name, tools_used=tool_count)
+
+        result_container: list[dict] = [{}]
+        error_container: list[str] = [None]
+
+        def run_arena():
+            try:
+                results = orchestrator.orchestrate(
+                    task, specs, [],
+                    "",
+                    timeout_per_agent=180.0,
+                    progress_callback=arena_progress,
+                    overall_timeout=300.0,
+                )
+                result_container[0] = results
+            except Exception as e:
+                error_container[0] = str(e)
+
+        arena_thread = threading.Thread(target=run_arena, daemon=True)
+        arena_thread.start()
+
+        # Keep REPL responsive while arena runs; periodically print status
+        import time
+        start_time = time.time()
+        last_status = 0
+        while arena_thread.is_alive():
+            time.sleep(0.5)
+            if time.time() - last_status > 10:
+                elapsed = int(time.time() - start_time)
+                _print(gray(f'[D] Arena running... {elapsed}s elapsed'))
+                last_status = time.time()
+
+        arena_thread.join(timeout=5)
+        summary = arena.stop()
+
+        # Print winner and agent summaries
+        winner = summary.get('winner', 'No winner')
+        _print(gold(f'[D] Arena complete! Winner: {winner}'))
+
+        results = result_container[0]
+        if results:
+            for name, r in results.items():
+                if r.error and not r.timed_out:
+                    _print(gray(f'  [{name}] Error: {r.error}'))
+                elif r.timed_out:
+                    _print(gray(f'  [{name}] Timed out after {r.duration_ms/1000:.0f}s'))
+                else:
+                    _print(gray(f'  [{name}] {r.duration_ms/1000:.1f}s — {len(r.tool_results)} tools used'))
+
+        if error_container[0]:
+            _print(gray(f'[D] Arena error: {error_container[0]}'))
+
+        return True
+
+    except Exception as e:
+        _print(gray(f'[D] Arena error: {e}'))
+        return True
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ from typing import Any
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 import threading
 
+from draguniteus.config import Config
+
 
 class AgentSpec:
     """Specification for a subagent task."""
@@ -55,7 +57,12 @@ class MultiAgentOrchestrator:
             if model not in self._agent_pool:
                 from draguniteus.client import DraguniteusClient
                 client = DraguniteusClient(self.config)
-                self._agent_pool[model] = client.with_options(model=model)
+                # Use _raw["model"] directly since Config.model is a read-only property
+                self._agent_pool[model] = DraguniteusClient.__new__(DraguniteusClient)
+                self._agent_pool[model]._sync = client._sync
+                self._agent_pool[model]._async = client._async
+                self._agent_pool[model].config = Config.__new__(Config)
+                self._agent_pool[model].config._raw = {**client.config._raw, "model": model}
             return self._agent_pool[model]
 
     def cancel(self) -> None:

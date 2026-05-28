@@ -130,6 +130,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
     """HTTP handler for preview server with routing logic."""
 
     router: PreviewRouter | None = None
+    preview_dir: Path | None = None
 
     def do_GET(self) -> None:
         if not self.router:
@@ -141,8 +142,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self.serve_index()
             return
 
-        # Map /<filename) to actual file in preview_dir
-        file_path = self.router.preview_dir / path
+        # Map /<filename> to actual file in preview_dir
+        preview_dir = self.router.preview_dir
+        file_path = preview_dir / path
         if not file_path.exists():
             self.send_error(404, f"File not found: {path}")
             return
@@ -158,8 +160,19 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self.wfile.write(rendered)
             return
 
-        # Serve static file
-        return super().do_GET()
+        # Serve static file — use our preview_dir as the root
+        try:
+            with open(file_path, "rb") as f:
+                content = f.read()
+            self.send_response(200)
+            ext = file_path.suffix.lower()
+            content_type = self.router.get_content_type(file_path)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", len(content))
+            self.end_headers()
+            self.wfile.write(content)
+        except IOError:
+            self.send_error(404, f"File not found: {path}")
 
     def serve_index(self) -> None:
         """Serve index of available previews."""
@@ -220,17 +233,43 @@ class PreviewServer:
         self._thread: threading.Thread | None = None
         self._browser_opened = False
 
+    def _stop_existing_server(self) -> None:
+        """Force-kill any existing server on the same port."""
+        import http.client
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=1)
+            conn.request("GET", "/")
+            conn.getresponse()
+            conn.close()
+        except Exception:
+            pass
+        # If server still exists, try socket-level reuse
+        if self._server:
+            try:
+                self._server.server_close()
+            except Exception:
+                pass
+
     def _find_available_port(self, start: int) -> int:
         """Find an available port starting from `start`."""
         for port in range(start, start + 100):
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind(("127.0.0.1", port))
                 s.close()
                 return port
             except OSError:
                 continue
-        return start  # fallback to start
+        # Last resort: try original port anyway
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", start))
+            s.close()
+            return start
+        except OSError:
+            return start + 1  # fallback
 
     def start(self) -> str:
         """Start the preview server. Returns the URL."""
@@ -238,6 +277,8 @@ class PreviewServer:
             return f"http://localhost:{self.port}"
 
         PreviewHandler.router = self.router
+        # Ensure handler always uses THIS server's preview_dir
+        PreviewHandler.preview_dir = self.preview_dir
 
         try:
             self._server = HTTPServer(("127.0.0.1", self.port), PreviewHandler)

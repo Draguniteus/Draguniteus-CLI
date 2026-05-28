@@ -35,7 +35,7 @@ REASONING_TASKS = frozenset([
 
 # Task types that are typically direct/fast
 DIRECT_TASKS = frozenset([
-    "write", "create", "add", "fix typo", "delete comment",
+    "write", "create", "add", "fix", "delete comment",
     "format", "simple question", "what is", "list", "show",
     "get", "fetch", "run", "execute", "build", "make",
     "delete", "remove", "rename", "move", "copy",

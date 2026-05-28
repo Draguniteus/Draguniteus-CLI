@@ -22,17 +22,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.live import Live
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.grid import Grid
-    HAS_RICH = True
-except ImportError:
-    HAS_RICH = False
-
 
 @dataclass
 class AgentMetrics:
@@ -48,6 +37,20 @@ class AgentMetrics:
     final_text: str = ""
 
 
+# Check Rich availability at class init time (avoids Python 3.12 dataclass parsing bug)
+_HAS_RICH = False
+try:
+    from rich.console import Console  # noqa: F401
+    from rich.table import Table  # noqa: F401
+    from rich.live import Live  # noqa: F401
+    from rich.panel import Panel  # noqa: F401
+    from rich.text import Text  # noqa: F401
+    from rich.layout import Layout  # noqa: F401
+    _HAS_RICH = True
+except ImportError:
+    _HAS_RICH = False
+
+
 class ArenaMode:
     """Live arena comparison matrix for multi-model agent runs.
 
@@ -56,7 +59,7 @@ class ArenaMode:
     """
 
     def __init__(self):
-        if not HAS_RICH:
+        if not _HAS_RICH:
             raise ImportError("Rich required for ArenaMode")
         self._agents: list[AgentMetrics] = []
         self._cols: int = 0
@@ -111,7 +114,10 @@ class ArenaMode:
         """Stop the arena display and return comparison summary."""
         self._running.clear()
         if self._live:
-            self._live.stop()
+            try:
+                self._live.stop()
+            except Exception:
+                pass
             self._live = None
 
         with self._lock:
@@ -151,7 +157,7 @@ class ArenaMode:
 
     def _render_loop(self) -> None:
         """Background thread that re-renders the arena table."""
-        console = Console()
+        console = Console(force_terminal=True, legacy_windows=False)
         self._live = Live(console=console, refresh_per_second=4, transient=False)
 
         def build_table() -> Table:
@@ -170,13 +176,13 @@ class ArenaMode:
                     tools_str = str(a.tools_used) if a.tools_used else "—"
 
                     if a.done:
-                        status = "✓ Done" if not a.selected else "✓ SELECTED"
+                        status = "[DONE]" if not a.selected else "[WINNER]"
                         status_style = "bold green" if a.selected else "green"
                     elif a.speed_s is not None:
-                        status = "⚡ Running"
+                        status = "[running]"
                         status_style = "cyan"
                     else:
-                        status = "○ Waiting"
+                        status = "[waiting]"
                         status_style = "dim"
 
                     table.add_row(
@@ -191,10 +197,12 @@ class ArenaMode:
             return table
 
         try:
-            self._live.start()
+            if self._live is not None:
+                self._live.start()
             while self._running.is_set():
                 try:
-                    self._live.update(build_table())
+                    if self._live is not None:
+                        self._live.update(build_table())
                     time.sleep(0.25)
 
                     # Check if all done
@@ -205,11 +213,16 @@ class ArenaMode:
                 except Exception:
                     time.sleep(0.25)
 
-            self._live.update(build_table())  # Final render with all results
+            if self._live is not None:
+                try:
+                    self._live.update(build_table())  # Final render with all results
+                except Exception:
+                    pass
 
         finally:
-            self._live.stop()
-            self._live = None
+            if self._live is not None:
+                self._live.stop()
+                self._live = None
 
     def get_winner(self) -> str | None:
         """Return the name of the winning agent after all agents complete."""

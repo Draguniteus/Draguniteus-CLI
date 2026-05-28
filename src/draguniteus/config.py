@@ -64,6 +64,14 @@ EFFORT_LEVELS = {
 }
 
 
+MINIMAX_MODELS = [
+    "MiniMax-M2.7",   # 200k context, complex reasoning, recursive self-improvement
+    "MiniMax-M2.5",  # Code generation and refactoring
+    "MiniMax-M2.1",  # Code generation/refactoring, enhanced reasoning
+    "MiniMax-M2",    # 200k context, agentic capabilities, function calling
+]
+
+
 class Config:
     """Layered config: env vars override file, file overrides defaults.
 
@@ -316,6 +324,10 @@ class Config:
     @property
     def chromadb_enabled(self) -> bool:
         return self._raw.get("chromadb_enabled", True)
+
+    @property
+    def git_auto_commit_enabled(self) -> bool:
+        return self._raw.get("git_auto_commit_enabled", False)
 
     # -------------------------------------------------------------------------
     # Migration helpers

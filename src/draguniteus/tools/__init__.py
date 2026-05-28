@@ -1,7 +1,7 @@
 """Tools package."""
 from draguniteus.tools.filesystem import FILESYSTEM_TOOLS, tool_read, tool_write, tool_edit, tool_multi_edit, tool_glob, tool_grep
 from draguniteus.tools.shell import SHELL_TOOLS, tool_bash
-from draguniteus.tools.git import GIT_TOOLS, tool_git_status, tool_git_diff, tool_git_commit, tool_git_push, tool_git_pr_create
+from draguniteus.tools.git import GIT_TOOLS, tool_git_status, tool_git_diff, tool_git_commit, tool_git_push, tool_git_pr_create, tool_git_auto_commit
 from draguniteus.tools.memory import MEMORY_TOOLS, tool_write_daily_note, tool_read_daily_note, tool_write_project_memory, tool_read_project_memory
 from draguniteus.tools.web import WEB_TOOLS, tool_webfetch, tool_websearch
 from draguniteus.tools.agent import AGENT_TOOLS, tool_agent
@@ -43,6 +43,7 @@ TOOL_MAP = {
     # Shell
     "Bash": tool_bash,
     # Git
+    "GitAutoCommit": tool_git_auto_commit,
     "GitStatus": tool_git_status,
     "GitDiff": tool_git_diff,
     "GitCommit": tool_git_commit,

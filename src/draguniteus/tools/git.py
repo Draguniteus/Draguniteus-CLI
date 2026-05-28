@@ -1,9 +1,21 @@
 """Git tools: Status, Diff, Commit, Push, PR."""
 from __future__ import annotations
 
+import datetime
+import subprocess
 from typing import Any
 
 GIT_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "GitAutoCommit",
+        "description": "Automatically commit all staged changes. Auto-generates a message if not provided.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Optional commit message (auto-generated if omitted)"}
+            }
+        }
+    },
     {
         "name": "GitStatus",
         "description": "Show the current git working tree status.",
@@ -68,7 +80,6 @@ GIT_TOOLS: list[dict[str, Any]] = [
 
 def _run_git(args: list[str], cwd: str | None = None) -> str:
     """Run a git command and return output."""
-    import subprocess
     try:
         result = subprocess.run(
             ["git"] + args,
@@ -79,6 +90,24 @@ def _run_git(args: list[str], cwd: str | None = None) -> str:
         return result.stdout + result.stderr
     except Exception as e:
         return f"Git error: {e}"
+
+
+def tool_git_auto_commit(message: str | None = None) -> str:
+    """Auto-commit all staged changes. Optionally pass a message; auto-generates one if not provided."""
+    result = subprocess.run(["git", "status", "--short"], capture_output=True, text=True)
+    if not result.stdout.strip():
+        return "No changes to commit."
+
+    staged_files = [line for line in result.stdout.splitlines() if line.startswith(("M", "A", "D"))]
+    if not staged_files:
+        return "No staged changes to commit."
+
+    if not message:
+        file_names = " ".join([line.split("\t", 1)[1].strip() for line in result.stdout.splitlines() if line.startswith(("M", "A"))])
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        message = f"Auto-commit {timestamp}: {file_names[:80]}"
+
+    return _run_git(["commit", "-m", message])
 
 
 def tool_git_status(path: str | None = None) -> str:
@@ -107,7 +136,6 @@ def tool_git_push(remote: str = "origin", branch: str | None = None) -> str:
 
 
 def tool_git_pr_create(title: str, body: str, head: str | None = None, base: str = "main") -> str:
-    import subprocess
     args = ["pr", "create", "-t", title, "-b", body, "-B", base]
     if head:
         args.extend(["-h", head])

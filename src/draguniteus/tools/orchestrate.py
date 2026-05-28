@@ -26,7 +26,7 @@ ORCHESTRATION_TOOLS = [
                             "model": {
                                 "type": "string",
                                 "enum": ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2"],
-                                "description": "Model to use (defaults to MiniMax-M2.7 for reasoning, use M2.1 for fast execution)"
+                                "description": "Model to use (M2.7 for reasoning, M2.5 for code, M2.1 for fast, M2 for agentic)"
                             },
                             "tools": {
                                 "type": "array",

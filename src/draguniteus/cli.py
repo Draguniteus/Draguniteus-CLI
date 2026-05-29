@@ -542,13 +542,174 @@ def main(
         except Exception:
             pass
 
-        response_text, tool_results, in_tok, out_tok, thinking_text = run_one_turn(_client, messages, _get_system_prompt(messages), _cfg, _full_drama)
-        elapsed = time.time() - start
+        # --- Streaming REPL: use stream_one_turn for progressive display ---
+        from draguniteus.agent import stream_one_turn
+        from draguniteus.streaming_display import StreamingDisplay
 
-        # Clear active background task after turn completes
+        display = StreamingDisplay(console, _full_drama) if _full_drama else None
+        if display:
+            display.start(start)
+
+        thinking_text = ""
+        response_text = ""
+        pending_tool_calls: list[dict] = []
+        tool_results: list[dict] = []
+        search_patterns: list[str] = []
+        files_reading: list[str] = []
+        current_tokens = 0
+        in_tok = 0
+        out_tok = 0
+
+        for text, thinking, tool_calls, is_final in stream_one_turn(
+            _client, messages, _get_system_prompt(messages), _cfg, _full_drama
+        ):
+            if thinking:
+                thinking_text = thinking
+            if text:
+                response_text = text
+
+            # Track search context
+            if tool_calls and display:
+                search_patterns = []
+                files_reading = []
+                for tc in tool_calls:
+                    tool_name = tc.get("name", "")
+                    args_str = tc.get("args", "")
+                    if tool_name == "Grep":
+                        try:
+                            args = json.loads(args_str) if args_str else {}
+                            if args.get("pattern"):
+                                search_patterns.append(args["pattern"])
+                            if args.get("path"):
+                                files_reading.append(args["path"])
+                        except Exception:
+                            pass
+                    elif tool_name == "Glob":
+                        try:
+                            args = json.loads(args_str) if args_str else {}
+                            if args.get("pattern"):
+                                search_patterns.append(args["pattern"])
+                            if args.get("path"):
+                                files_reading.append(args["path"])
+                        except Exception:
+                            pass
+                    elif tool_name in ("Read", "mcp__filesystem__read_text_file"):
+                        try:
+                            args = json.loads(args_str) if args_str else {}
+                            fp = args.get("file_path", args.get("path", ""))
+                            if fp:
+                                files_reading.append(fp)
+                        except Exception:
+                            pass
+                if search_patterns or files_reading:
+                    display.set_search_context(search_patterns, files_reading)
+
+            try:
+                current_tokens = stream_one_turn._last_usage
+            except Exception:
+                pass
+
+            if display:
+                display.update(
+                    thinking=thinking_text,
+                    response=response_text,
+                    tokens=current_tokens,
+                )
+
+            if tool_calls is not None:
+                pending_tool_calls = tool_calls
+
+            if is_final:
+                if pending_tool_calls and display:
+                    for tc in pending_tool_calls:
+                        tool_name = tc.get("name", "")
+                        args_str = tc.get("args", "")
+                        fp = _extract_file_path(tool_name, args_str)
+                        if fp:
+                            display.show_tool_start(tool_name, args_str[:50], fp)
+
+                if display:
+                    display.stop()
+
+                # Fire notification hooks
+                try:
+                    from draguniteus.hook_runner import send_notification
+                    tool_names = [tc.get("name", "?") for tc in (pending_tool_calls or [])]
+                    if tool_names:
+                        send_notification(f"Turn complete — used: {', '.join(tool_names)}")
+                    else:
+                        send_notification("Turn complete — no tools used")
+                except Exception:
+                    pass
+
+                # Execute tools if any
+                if pending_tool_calls:
+                    from draguniteus.agent import execute_tool_calls, StreamHandler
+                    handler = StreamHandler(console, _full_drama)
+                    handler._tool_calls = pending_tool_calls
+                    tool_results, _, _ = execute_tool_calls(pending_tool_calls, messages, handler)
+
+                    if tool_results and _full_drama:
+                        dim_color = "\033[90m"
+                        reset = "\033[0m"
+                        for tr in tool_results:
+                            name = tr.get("tool", "?")
+                            result = str(tr.get("result", ""))
+                            if name == "Bash" and len(result) > 2048:
+                                try:
+                                    display.show_output(result, title=f"{name} output")
+                                except Exception:
+                                    for ln in result.split('\n')[:50]:
+                                        try:
+                                            sys.stdout.write(f"  {ln}\n")
+                                        except UnicodeEncodeError:
+                                            sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                            else:
+                                try:
+                                    sys.stdout.write(f"\n{dim_color}⎿ {name}{reset}\n")
+                                except UnicodeEncodeError:
+                                    sys.stdout.write(f"\n> {name}\n")
+                                lines = result.split('\n')
+                                for ln in lines[:50]:
+                                    try:
+                                        sys.stdout.write(f"  {ln}\n")
+                                    except UnicodeEncodeError:
+                                        sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                                if len(lines) > 50:
+                                    sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
+                        sys.stdout.flush()
+
+                # Print response with ● prefix
+                if response_text:
+                    text = response_text.lstrip('\n')
+                    try:
+                        sio = StringIO()
+                        c2 = Console(file=sio, force_terminal=False)
+                        c2.print(Markdown(text))
+                        rendered = sio.getvalue().rstrip('\n')
+                    except Exception:
+                        rendered = text
+                    import re
+                    clean_lines = []
+                    for line in rendered.split('\n'):
+                        clean = re.sub(r'\[/?[^]]+\]', '', line)
+                        clean = clean.strip()
+                        clean_lines.append(clean)
+                    first = True
+                    for line in clean_lines:
+                        if not line:
+                            continue
+                        prefix = "● " if first else "  "
+                        first = False
+                        try:
+                            print(prefix + line)
+                        except UnicodeEncodeError:
+                            print((prefix + line).encode('ascii', errors='replace').decode('ascii'))
+
+        elapsed = time.time() - start
         _active_bg_task = None
 
-        # --- Self-improvement critique after turn ---
+        # --- Self-improvement critique ---
         if tool_results and getattr(cfg, 'self_improvement_enabled', True):
             try:
                 from draguniteus.self_improvement import get_self_improvement_engine
@@ -559,16 +720,15 @@ def main(
             except Exception:
                 pass
 
-        # Track and check budget
+        # Track budget
         if _max_budget is not None:
-            # MiniMax pricing: ~$0.05 per million tokens (input + output combined)
             turn_cost = (in_tok + out_tok) / 1_000_000 * 0.05
             _total_cost += turn_cost
             if _total_cost > _max_budget:
                 _print(red(f"Budget limit reached (${_total_cost:.4f} > ${_max_budget:.4f}). Exiting."))
                 break
 
-        # Check if context needs compaction (at 80% of max_tokens)
+        # Context compaction check
         try:
             from draguniteus.hook_runner import get_hook_runner
             hook_runner = get_hook_runner()
@@ -579,49 +739,11 @@ def main(
         except Exception:
             pass
 
-        # Show thinking inline if present
-        if thinking_text and _full_drama:
-            display_thinking = thinking_text[:300] + "..." if len(thinking_text) > 300 else thinking_text
-            _print(thinking(f"[Thinking... {display_thinking}]"))
-
-        if response_text:
-            # Strip leading newlines
-            text = response_text.lstrip('\n')
-            # Try Rich markdown rendering, fall back to plain text
-            try:
-                from io import StringIO
-                sio = StringIO()
-                c2 = Console(file=sio, force_terminal=False)
-                c2.print(Markdown(text))
-                rendered = sio.getvalue().rstrip('\n')
-            except Exception:
-                rendered = text
-            # Strip Rich markup and extra whitespace from each line
-            import re
-            clean_lines = []
-            for line in rendered.split('\n'):
-                # Remove Rich markup tags
-                clean = re.sub(r'\[/?[^]]+\]', '', line)
-                # Strip leading/trailing whitespace
-                clean = clean.strip()
-                clean_lines.append(clean)
-            # Print with ● prefix on first non-empty line (Claude Code style)
-            first = True
-            for line in clean_lines:
-                if not line:
-                    continue
-                prefix = "● " if first else "  "
-                first = False
-                try:
-                    print(prefix + line)
-                except UnicodeEncodeError:
-                    print((prefix + line).encode('ascii', errors='replace').decode('ascii'))
-
         # Store tool results for expandable display
         global _last_tool_results
         _last_tool_results = tool_results
 
-        # Show collapsed tool call summary (Claude Code style: "Called Bash 3 times")
+        # Show collapsed tool call summary
         if tool_results:
             from collections import Counter
             counts = Counter(tr.get("tool", "?") for tr in tool_results)
@@ -634,7 +756,7 @@ def main(
                 summary = f"Called {summary}"
             _print(gray(summary))
 
-        # Print status line: model | cwd | git branch | context % | cost | duration
+        # Print status line
         try:
             import subprocess
             branch = None
@@ -677,11 +799,8 @@ def main(
             summary = archive.auto_archive_if_needed(len(messages), max_turns=40)
             if summary:
                 if _full_drama:
-                    console.print(gray(f"  [archived {min(20, len(messages)//2)} turns: {summary[:80]}...]"))
-                else:
-                    print(gray(f"[archived: {summary[:80]}...]"))
-        except Exception as e:
-            console.print(gray(f"  [auto-archive warning: {e}]"))
+                    _print(gray(f"[D] Auto-archived: {summary[:80]}..."))
+        except Exception:
             pass
 
         print_divider(_full_drama)

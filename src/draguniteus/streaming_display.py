@@ -228,6 +228,10 @@ class StreamingDisplay:
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
         line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
+        # Always add \n when thinking is active so it stays on its own dedicated line
+        if self._thinking_active:
+            line = line + "\n"
+
         try:
             # Erase entire line and return to column 0, then write new thinking line
             # \x1b[2K = erase entire line, \r = return to column 0

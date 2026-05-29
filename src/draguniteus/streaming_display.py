@@ -36,6 +36,47 @@ STAR_SPINNERS = ['·', '✢', '✳', '✶', '✻', '✽']
 
 MAX_THINKING_DISPLAY = 100  # max thinking content chars to show
 
+# Global live output handler for real-time tool output streaming
+# Set by cli.py to enable line-by-line streaming during tool execution
+_live_output_handler: callable | None = None
+
+
+def set_live_output_handler(handler: callable | None) -> None:
+    """Set the global live output handler for real-time tool streaming.
+
+    The handler should be a callable that takes (line: str, is_stderr: bool).
+    This enables tools like Bash to stream output line-by-line as it's produced.
+    """
+    global _live_output_handler
+    _live_output_handler = handler
+
+
+def live_output_line(line: str, is_stderr: bool = False) -> None:
+    """Write a single line of tool output immediately with aggressive flushing.
+
+    This is called by tools during execution to stream output in real-time.
+    Uses sys.stdout.buffer.write for UTF-8 encoding support on Windows.
+    """
+    global _live_output_handler
+    if _live_output_handler:
+        try:
+            _live_output_handler(line, is_stderr)
+        except Exception:
+            pass
+    else:
+        # Default: write directly to stdout via Python's buffered IO (respects UTF-8)
+        try:
+            dim = "\033[90m"
+            reset = "\033[0m"
+            if is_stderr:
+                line_out = f"  {dim}{line}{reset}\n"
+            else:
+                line_out = f"  {line}\n"
+            sys.stdout.buffer.write(line_out.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
+        except Exception:
+            pass
+
 
 class StreamingDisplay:
     """Manages layered progressive display during agent streaming.
@@ -141,21 +182,21 @@ class StreamingDisplay:
             self._thinking_print()
 
     def _thinking_print(self) -> None:
-        """Print thinking line via \r (in-place update on Windows)."""
+        """Print thinking line via simple \r overwrite (Windows-compatible).
+
+        Uses only \r (carriage return) for in-place overwriting, no ANSI cursor moves.
+        The thinking line includes a preview of actual thinking content.
+        """
         elapsed_str = self._format_elapsed(self._elapsed)
 
         # Build intensity message based on thinking state and elapsed time
         intensity = ""
         if self._thinking_active:
-            # Still receiving thinking content
-            if self._elapsed > 120:  # 2+ minutes
+            if self._elapsed > 120:
                 intensity = " · almost done thinking with max effort"
-            elif self._elapsed > 60:  # 1+ minute
+            elif self._elapsed > 60:
                 intensity = " · thinking with max effort"
-            elif self._elapsed > 15:
-                intensity = " · thought for"
         elif self._thinking_done:
-            # Thinking block ended - now generating response
             if self._elapsed > 15:
                 intensity = " · almost done with max effort"
 
@@ -170,55 +211,28 @@ class StreamingDisplay:
         if self._lines_added > 0:
             lines_str = f" · +{self._lines_added} lines"
 
-        # Build search context line if active
-        search_context = ""
-        if self._search_patterns or self._files_reading:
-            pattern_count = len(self._search_patterns) if self._search_patterns else 0
-            file_count = len(self._files_reading) if self._files_reading else 0
-            search_context = f"Searching for {pattern_count} pattern{'s' if pattern_count != 1 else ''}, reading {file_count} file{'s' if file_count != 1 else ''}… (ctrl+o to expand)"
-
         # Workflow phase badge
         phase_badge = ""
         if self._workflow_phase:
             phase_badge = f" {self._workflow_phase}"
 
-        # Build the thinking line (spinner + verb + elapsed + tokens + intensity)
+        # Build actual thinking content preview (first 100 chars)
+        # NOTE: We NO LONGER include thinking content in the thinking line.
+        # It causes visual overlap with response text when content is long.
+        # The thinking line shows only: spinner + verb + elapsed + tokens + intensity
+        thinking_preview = ""
+
+        # Build the thinking line: spinner + verb + elapsed + tokens + intensity (NO content preview)
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
         line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
         try:
-            # Calculate total lines to clear (thinking line + search context + file context)
-            total_lines = 1
-            if search_context:
-                total_lines += 1
-            if self._tool_path:
-                total_lines += 1
-
-            if self._last_thinking_len > 0:
-                # Subsequent update: move cursor UP to the thinking line using ANSI
-                # Then \r to start of that line, spaces to clear
-                move_up = "\x1b[{}A".format(total_lines)
-                clear_lines = move_up + "\r" + " " * min(self._last_thinking_len, 200)
-                os.write(1, clear_lines.encode('utf-8', errors='replace'))
-            else:
-                # First time: move to a new line before printing thinking status
-                os.write(1, "\n".encode('utf-8', errors='replace'))
-
-            # Write new thinking line (ending with \n to move cursor to next line)
-            os.write(1,(line + "\n").encode('utf-8', errors='replace'))
-
-            # Write search context on next line if active
-            if search_context:
-                search_line = f"\n  {search_context}"
-                os.write(1,search_line.encode('utf-8', errors='replace'))
-
-            # Write file context on next line if active
-            if self._tool_path:
-                file_context = f"\n  ⎿  {self._tool_path}"
-                os.write(1,file_context.encode('utf-8', errors='replace'))
-
+            # Use ANSI clear line + carriage return for reliable Windows overwrite
+            clear_and_home = "\x1b[2K\r"  # Erase line + return to column 0
+            sys.stdout.buffer.write(clear_and_home.encode('utf-8'))
+            sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
-            self._last_thinking_len = len(line) + 1  # +1 for the \n
+            self._last_thinking_len = len(line)
         except Exception:
             pass
 
@@ -226,13 +240,10 @@ class StreamingDisplay:
         """Fallback plain thinking line without ANSI colors."""
         elapsed_str = self._format_elapsed(self._elapsed)
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
-        thinking_content = self._thinking[:MAX_THINKING_DISPLAY] if self._thinking else ""
-        if thinking_content:
-            line = f"\r{spinner} {self._thinking_verb}... ({elapsed_str}) {thinking_content}"
-        else:
-            line = f"\r{spinner} {self._thinking_verb}... ({elapsed_str})"
+        # Plain version also does NOT include thinking content to avoid overlap
+        line = f"\x1b[2K\r{spinner} {self._thinking_verb}... ({elapsed_str})"
         try:
-            os.write(1,line.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
             self._last_thinking_len = len(line)
         except Exception:
@@ -249,19 +260,13 @@ class StreamingDisplay:
             bullet = f"\n  \033[34m●\033[0m \033[36m{tool_name}\033[0m({args_display})\033[90m…\033[0m"
             path_display = f"\n    \033[36m⎿\033[0m  {path}\033[90m\033[0m" if path else ""
             display = bullet + path_display
-            os.write(1,display.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.write(display.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
         except Exception:
             pass
 
     def show_output(self, output: str, title: str = "output", max_lines: int = 200) -> None:
-        """Stream command output inline — colorized by type.
-
-        Args:
-            output: raw stdout/stderr from a command
-            title: label for this output block (e.g., "output", "errors")
-            max_lines: cap on lines to display (prevents token bloat)
-        """
+        """Stream command output inline — colorized by type."""
         if not output or not self.full_drama:
             return
 
@@ -271,22 +276,18 @@ class StreamingDisplay:
         truncated = total > max_lines
 
         try:
-            # Header with line count
             dim = DIM
             reset = RESET
             cyan = CYAN
             header = f"\n  {cyan}--- {title} ({total} line{'s' if total != 1 else ''}) ---{reset}\n"
-            os.write(1,header.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.write(header.encode('utf-8', errors='replace'))
 
-            # Colorize based on output characteristics
             for i, line in enumerate(display_lines):
                 line = line.rstrip("\r")
                 if not line:
-                    # Empty line — preserve spacing
-                    os.write(1,f"  \n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.write("  \n".encode('utf-8', errors='replace'))
                     continue
 
-                # Detect line type for coloring
                 if any(k in line for k in ["error", "ERROR", "failed", "FAILED", "FAIL"]):
                     color = RED
                 elif any(k in line for k in ["warning", "WARNING", "WARN", "deprecated"]):
@@ -294,37 +295,34 @@ class StreamingDisplay:
                 elif any(k in line for k in ["pass", "PASS", "ok", "OK", "success", "SUCCESS"]):
                     color = GREEN
                 elif line.startswith("+") or line.startswith(">"):
-                    color = CYAN  # diff/addition lines
+                    color = CYAN
                 elif line.startswith("---") or line.startswith("==="):
-                    color = DIM  # separator lines
+                    color = DIM
                 elif "│" in line or "└" in line or "┌" in line or "├" in line:
-                    color = CYAN  # box-drawing / tree lines
+                    color = CYAN
                 else:
                     color = WHITE
 
                 try:
-                    os.write(1,f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.write(f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
                 except Exception:
-                    # Fallback for non-colorable content
-                    os.write(1,f"  {line}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.write(f"  {line}\n".encode('utf-8', errors='replace'))
 
-                # Flush every 50 lines for streaming effect on large outputs
                 if i > 0 and i % 50 == 0:
                     sys.stdout.buffer.flush()
 
             if truncated:
                 footer = f"  {DIM}... ({total - max_lines} more lines) ...{reset}\n"
-                os.write(1,footer.encode('utf-8', errors='replace'))
+                sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
 
             footer = f"  {cyan}--- end ---{reset}\n"
-            os.write(1,footer.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
 
         except Exception:
-            # Fallback: print raw output
             try:
                 for line in display_lines[:20]:
-                    os.write(1,f"{line}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.write(f"{line}\n".encode('utf-8', errors='replace'))
                 sys.stdout.buffer.flush()
             except Exception:
                 pass
@@ -358,11 +356,10 @@ class StreamingDisplay:
 
     def stop(self) -> None:
         """Stop the display cleanly."""
-        # Clear thinking line
         if self._showing_thinking:
             try:
-                clear = "\r" + " " * self._last_thinking_len + "\r"
-                os.write(1,clear.encode('utf-8', errors='replace'))
+                clear = "\x1b[2K\r" + " " * self._last_thinking_len + "\x1b[2K\r"
+                sys.stdout.buffer.write(clear.encode('utf-8', errors='replace'))
                 sys.stdout.buffer.flush()
             except Exception:
                 pass

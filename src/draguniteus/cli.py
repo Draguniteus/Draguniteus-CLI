@@ -29,8 +29,10 @@ from draguniteus.theming import (
     get_thinking_verb,
     gold,
     gray,
+    print_bottom_bar,
     print_divider,
     print_error,
+    print_shortcuts_line,
     print_status_line,
     print_success,
     print_thinking,
@@ -469,9 +471,10 @@ def main(
     else:
         session_id_display = session.id
 
-    if not bare:
-        console.print(gray("Type /help for commands\n"))
-    print_divider(_full_drama)
+    # Startup outputs: top divider + header + middle divider (print_welcome does this)
+    # Then REPL shows ❯ prompt on the middle divider line start
+    # After each turn: bottom divider + shortcuts (see end of REPL loop)
+    # The REPL prompt overwrites the start of the current line with ❯
 
     turn_count = 0
     while True:
@@ -550,9 +553,37 @@ def main(
         if display:
             display.start(start)
 
+        # Register live output handler for real-time tool output streaming
+        from draguniteus.streaming_display import set_live_output_handler, CYAN, DIM, RESET, RED, GREEN, YELLOW
+        _live_tool_name = [None]  # closure-safe mutable cell
+
+        def _live_output_cb(line: str, is_stderr: bool = False) -> None:
+            """Write a single line of tool output immediately with aggressive flushing."""
+            try:
+                # Colorize based on content
+                if any(k in line.lower() for k in ["error", "failed", "fail"]):
+                    color = RED
+                elif any(k in line.lower() for k in ["warning", "warn"]):
+                    color = YELLOW
+                elif any(k in line.lower() for k in ["pass", "ok", "success"]):
+                    color = GREEN
+                elif line.startswith("+") or line.startswith(">"):
+                    color = CYAN
+                else:
+                    color = DIM if is_stderr else ""
+
+                line_out = f"  {color}{line}{RESET}\n"
+                sys.stdout.buffer.write(line_out.encode('utf-8', errors='replace'))
+                sys.stdout.buffer.flush()
+            except Exception:
+                pass
+
+        set_live_output_handler(_live_output_cb if _full_drama else None)
+
         thinking_text = ""
         response_text = ""
         prev_response_len = 0
+        prev_thinking_len = 0
         thinking_shown = False
         pending_tool_calls: list[dict] = []
         tool_results: list[dict] = []
@@ -562,25 +593,38 @@ def main(
         in_tok = 0
         out_tok = 0
 
+        # Wire callbacks for tool display during streaming
+        def on_tool_start_cb(tool_name: str, args_display: str = "") -> None:
+            if display:
+                display.show_tool_start(tool_name, args_display)
+
+        def on_tool_call_cb(tool_call: dict) -> None:
+            if display and tool_call:
+                tool_name = tool_call.get("name", "")
+                args_str = tool_call.get("args", "")
+                display.show_tool_start(tool_name, args_str[:100])
+
         for text, thinking, tool_calls, is_final, thinking_active, thinking_done, current_tokens in stream_one_turn(
-            _client, messages, _get_system_prompt(messages), _cfg, _full_drama
+            _client, messages, _get_system_prompt(messages), _cfg, _full_drama,
+            on_tool_call=on_tool_call_cb,
+            on_tool_start=on_tool_start_cb,
         ):
-            # Track accumulated thinking and response text
+            # Track accumulated thinking (for display.update which shows thinking line with content preview)
             if thinking:
                 thinking_text = thinking
+
+            # Stream response text progressively (character by character)
             if text:
                 response_text = text
-                # Print ONLY the new portion of response text progressively
-                # (Rich/Console buffers output; direct stdout.buffer writes for streaming)
-                if response_text and display:
+                if display and _full_drama:
                     new_text = response_text[prev_response_len:]
-                    if new_text and _full_drama:
-                        # Print new text characters immediately (no buffering/holding for lines)
+                    if new_text:
                         for ch in new_text:
                             try:
-                                os.write(1, ch.encode('utf-8', errors='replace'))
+                                sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
                             except Exception:
                                 pass
+                        sys.stdout.buffer.flush()
                         prev_response_len = len(response_text)
 
             # Track search context
@@ -639,43 +683,8 @@ def main(
                 remaining = response_text[prev_response_len:]
                 if remaining and _full_drama:
                     try:
-                        os.write(1, remaining.encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
-                    except Exception:
-                        pass
-
-                if pending_tool_calls and display:
-                    for tc in pending_tool_calls:
-                        tool_name = tc.get("name", "")
-                        args_str = tc.get("args", "")
-                        fp = _extract_file_path(tool_name, args_str)
-                        if fp:
-                            display.show_tool_start(tool_name, args_str[:50], fp)
-
-                if display:
-                    display.stop()
-
-                # Show thinking content in a collapsed block after streaming
-                # (only if substantial thinking content was accumulated)
-                thinking_len = len(thinking_text) if thinking_text else 0
-                if thinking_len > 50 and _full_drama:
-                    # Show thinking in a dim gray collapsible block
-                    try:
-                        dim = "\033[90m"
-                        reset = "\033[0m"
-                        cyan = "\033[36m"
-                        # Print thinking block header
-                        thinking_snippet = thinking_text[:500]
-                        if thinking_len > 500:
-                            thinking_snippet += "..."
-                        lines = thinking_snippet.split('\n')[:20]
-                        os.write(1, f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
-                        for ln in lines:
-                            os.write(1, f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
-                        if thinking_len > 500 or len(lines) > 20:
-                            os.write(1, f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
-                        os.write(1, f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
+                        sys.stdout.buffer.write(remaining.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
                     except Exception:
                         pass
 
@@ -684,53 +693,42 @@ def main(
                     from draguniteus.theming import print_thinking
                     print_thinking(elapsed, _full_drama)
 
-                # Fire notification hooks
-                try:
-                    from draguniteus.hook_runner import send_notification
-                    tool_names = [tc.get("name", "?") for tc in (pending_tool_calls or [])]
-                    if tool_names:
-                        send_notification(f"Turn complete — used: {', '.join(tool_names)}")
-                    else:
-                        send_notification("Turn complete — no tools used")
-                except Exception:
-                    pass
-
-                # Execute tools if any
-                if pending_tool_calls:
-                    from draguniteus.agent import execute_tool_calls, StreamHandler
-                    handler = StreamHandler(console, _full_drama)
-                    handler._tool_calls = pending_tool_calls
-                    tool_results, _, _ = execute_tool_calls(pending_tool_calls, messages, handler)
-
-                    if tool_results and _full_drama:
-                        dim_color = "\033[90m"
-                        reset = "\033[0m"
-                        for tr in tool_results:
-                            name = tr.get("tool", "?")
-                            result = str(tr.get("result", ""))
-                            if name == "Bash" and len(result) > 2048:
-                                try:
-                                    display.show_output(result, title=f"{name} output")
-                                except Exception:
-                                    for ln in result.split('\n')[:50]:
-                                        try:
-                                            os.write(1, f"  {ln}\n".encode('utf-8', errors='replace'))
-                                        except UnicodeEncodeError:
-                                            os.write(1, f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
-                            else:
-                                try:
-                                    os.write(1, f"\n{dim_color}⎿ {name}{reset}\n".encode('utf-8', errors='replace'))
-                                except UnicodeEncodeError:
-                                    os.write(1, f"\n> {name}\n".encode('utf-8', errors='replace'))
-                                lines = result.split('\n')
-                                for ln in lines[:50]:
+                # Tool execution now happens inside stream_one_turn (in parallel during streaming)
+                # At is_final=True, tool_calls is the executed tool_results
+                # Display tool results if available
+                if tool_calls and _full_drama:
+                    dim_color = "\033[90m"
+                    reset = "\033[0m"
+                    for tr in tool_calls:  # tool_calls here is actually tool_results (executed)
+                        name = tr.get("tool", "?")
+                        result = str(tr.get("result", ""))
+                        if name == "Bash" and len(result) > 2048:
+                            try:
+                                display.show_output(result, title=f"{name} output")
+                            except Exception:
+                                for ln in result.split('\n')[:50]:
                                     try:
-                                        os.write(1, f"  {ln}\n".encode('utf-8', errors='replace'))
+                                        sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
                                     except UnicodeEncodeError:
-                                        os.write(1, f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
-                                if len(lines) > 50:
-                                    os.write(1, f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
+                                        sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
+                        else:
+                            try:
+                                sys.stdout.buffer.write(f"\n{dim_color}⎿ {name}{reset}\n".encode('utf-8', errors='replace'))
+                            except UnicodeEncodeError:
+                                sys.stdout.buffer.write(f"\n> {name}\n".encode('utf-8', errors='replace'))
+                            lines = result.split('\n')
+                            for ln in lines[:50]:
+                                try:
+                                    sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
+                                except UnicodeEncodeError:
+                                    sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
+                            if len(lines) > 50:
+                                sys.stdout.buffer.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.flush()
+
+                # At is_final, tool_calls contains executed tool_results from stream_one_turn
+                if is_final and tool_calls:
+                    tool_results = tool_calls
 
                 # Print response with ● prefix ONLY when not in dramatic mode
                 # (in dramatic mode, text was already streamed progressively above)
@@ -738,8 +736,8 @@ def main(
                     # In dramatic mode, streaming already printed the response.
                     # Just print a final newline to close any pending line.
                     try:
-                        os.write(1, "\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
+                        sys.stdout.buffer.write("\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
                     except Exception:
                         pass
                 elif response_text and not _full_drama:
@@ -770,6 +768,10 @@ def main(
 
         elapsed = time.time() - start
         _active_bg_task = None
+
+        # Unregister live output handler - streaming complete
+        from draguniteus.streaming_display import set_live_output_handler
+        set_live_output_handler(None)
 
         # --- Self-improvement critique ---
         if tool_results and getattr(_cfg, 'self_improvement_enabled', True):
@@ -865,7 +867,12 @@ def main(
         except Exception:
             pass
 
+        # Show bottom bar if there are pending edits (Claude Code style)
+        if _pending_edits and _full_drama:
+            print_bottom_bar(has_edits=True, edit_count=len(_pending_edits))
+
         print_divider(_full_drama)
+        print_shortcuts_line()
         console.print()
 
         # --- Auto-checkpoint every N turns ---
@@ -911,8 +918,9 @@ def _load_plugins() -> None:
             pass
 
         plugins = plugin_mgr.discover_plugins()
-        if plugins:
-            console.print(gray(f"Loaded {len(plugins)} plugins: {', '.join(p.name for p in plugins)}"))
+        # Suppress plugin loading message to match Claude Code's clean startup
+        # if plugins:
+        #     console.print(gray(f"Loaded {len(plugins)} plugins: {', '.join(p.name for p in plugins)}"))
 
         # Register plugin hooks with hook runner
         from draguniteus.hook_runner import get_hook_runner
@@ -1075,6 +1083,30 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
     if display:
         display.start(start_time)
 
+    # Register live output handler for real-time tool output streaming
+    from draguniteus.streaming_display import set_live_output_handler, CYAN, DIM, RESET, RED, GREEN, YELLOW
+
+    def _live_output_cb(line: str, is_stderr: bool = False) -> None:
+        """Write a single line of tool output immediately with aggressive flushing."""
+        try:
+            if any(k in line.lower() for k in ["error", "failed", "fail"]):
+                color = RED
+            elif any(k in line.lower() for k in ["warning", "warn"]):
+                color = YELLOW
+            elif any(k in line.lower() for k in ["pass", "ok", "success"]):
+                color = GREEN
+            elif line.startswith("+") or line.startswith(">"):
+                color = CYAN
+            else:
+                color = DIM if is_stderr else ""
+            line_out = f"  {color}{line}{RESET}\n"
+            sys.stdout.buffer.write(line_out.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
+        except Exception:
+            pass
+
+    set_live_output_handler(_live_output_cb if _full_drama else None)
+
     thinking_text = ""
     response_text = ""
     pending_tool_calls = []
@@ -1085,13 +1117,44 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
     search_patterns: list[str] = []
     files_reading: list[str] = []
 
+    # Track for incremental thinking stream
+    prev_thinking_len = 0
+    prev_response_len = 0
+
+    # Wire callbacks for tool display during streaming
+    def on_tool_start_cb(tool_name: str, args_display: str = "") -> None:
+        if display:
+            display.show_tool_start(tool_name, args_display)
+
+    def on_tool_call_cb(tool_call: dict) -> None:
+        if display and tool_call:
+            tool_name = tool_call.get("name", "")
+            args_str = tool_call.get("args", "")
+            display.show_tool_start(tool_name, args_str[:100])
+
     # Stream with progressive display
-    for text, thinking, tool_calls, is_final, thinking_active, thinking_done, current_tokens in stream_one_turn(client, messages, _get_system_prompt(messages), cfg, _full_drama):
-        # Update accumulated values
+    for text, thinking, tool_calls, is_final, thinking_active, thinking_done, current_tokens in stream_one_turn(
+        client, messages, _get_system_prompt(messages), cfg, _full_drama,
+        on_tool_call=on_tool_call_cb,
+        on_tool_start=on_tool_start_cb,
+    ):
+        # Track accumulated thinking (display.update shows thinking line with content preview)
         if thinking:
             thinking_text = thinking
+
+        # Stream response text progressively (character by character)
         if text:
             response_text = text
+            if display and _full_drama:
+                new_text = response_text[prev_response_len:]
+                if new_text:
+                    for ch in new_text:
+                        try:
+                            sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
+                        except Exception:
+                            pass
+                    sys.stdout.buffer.flush()
+                    prev_response_len = len(response_text)
 
         # Detect search tool calls to update search context
         if tool_calls and display:
@@ -1161,37 +1224,12 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
         if is_final:
             elapsed = time.time() - start_time
 
-            # Show tool context BEFORE stopping display and executing tools
-            if pending_tool_calls and display:
-                for tc in pending_tool_calls:
-                    tool_name = tc.get("name", "")
-                    args_str = tc.get("args", "")
-                    # Extract file path from common tool args
-                    file_path = _extract_file_path(tool_name, args_str)
-                    if file_path:
-                        display.show_tool_start(tool_name, args_str[:50], file_path)
-
-            # Stop the live display cleanly
-            if display:
-                display.stop()
-
-            # Show thinking content in a collapsed block after streaming
-            thinking_len = len(thinking_text) if thinking_text else 0
-            if thinking_len > 50 and _full_drama:
+            # Flush remaining response text
+            remaining = response_text[prev_response_len:]
+            if remaining and _full_drama:
                 try:
-                    dim = "\033[90m"
-                    reset = "\033[0m"
-                    thinking_snippet = thinking_text[:500]
-                    if thinking_len > 500:
-                        thinking_snippet += "..."
-                    lines = thinking_snippet.split('\n')[:20]
-                    os.write(1, f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
-                    for ln in lines:
-                        os.write(1, f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
-                    if thinking_len > 500 or len(lines) > 20:
-                        os.write(1, f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
-                    os.write(1, f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
-                    sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
+                    sys.stdout.buffer.write(remaining.encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.flush()
                 except Exception:
                     pass
 
@@ -1200,30 +1238,19 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                 from draguniteus.theming import print_thinking
                 print_thinking(elapsed, _full_drama)
 
-            # Fire notification hooks for turn completion
-            try:
-                from draguniteus.hook_runner import send_notification
-                tool_names = [tc.get("name", "?") for tc in (pending_tool_calls or [])]
-                if tool_names:
-                    send_notification(f"Turn complete — used: {', '.join(tool_names)}")
-                else:
-                    send_notification("Turn complete — no tools used")
-            except Exception:
-                pass
-
-            # Store tool results
-            if pending_tool_calls:
-                from draguniteus.agent import execute_tool_calls
-                from draguniteus.agent import StreamHandler
-                handler = StreamHandler(console, _full_drama)
-                handler._tool_calls = pending_tool_calls
-                tool_results, _, _ = execute_tool_calls(pending_tool_calls, messages, handler)
-
-                # Print tool results inline (one-shot mode has no interactive expand)
-                if tool_results and _full_drama:
+            # Show tool bullets (tools shown during streaming via callbacks, this is backup display)
+            # Tool execution now happens inside stream_one_turn (in parallel during streaming)
+                # At is_final=True, tool_calls is the executed tool_results
+                if tool_calls and display:
+                    for tc in tool_calls[:5]:  # Show first 5 tools as bullets
+                        tool_name = tc.get("name", "")
+                        args_str = tc.get("args", "")[:50]
+                        file_path = _extract_file_path(tool_name, args_str)
+                        if file_path:
+                            display.show_tool_start(tool_name, args_str, file_path)
                     dim_color = "\033[90m"  # gray
                     reset = "\033[0m"
-                    for i, tr in enumerate(tool_results, 1):
+                    for i, tr in enumerate(tool_calls, 1):  # tool_calls here is tool_results (executed)
                         name = tr.get("tool", "?")
                         result = str(tr.get("result", ""))
 
@@ -1254,6 +1281,10 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                             if len(lines) > 50:
                                 sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
                     sys.stdout.flush()
+
+            # At is_final, tool_calls contains executed tool_results from stream_one_turn
+            if is_final and tool_calls:
+                tool_results = tool_calls
 
             # Print response with bullet prefix (inside Rich.Live panel already shown, but need clean final output)
             if response_text:
@@ -1304,7 +1335,9 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                 _print(gray(summary))
 
             elapsed = time.time() - start_time
-            # No need for separate thinking indicator - already shown during streaming
+            # Unregister live output handler
+            from draguniteus.streaming_display import set_live_output_handler
+            set_live_output_handler(None)
             return  # Done after is_final block
 
     elapsed = time.time() - start_time
@@ -1315,13 +1348,46 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
         _total_cost += turn_cost
         if _total_cost > _max_budget:
             print(f"\nBudget limit reached (${_total_cost:.4f} > ${_max_budget:.4f}).")
+            from draguniteus.streaming_display import set_live_output_handler
+            set_live_output_handler(None)
             return
 
 
 def _read_input() -> str:
-    """Read user input with prompt, history search (Ctrl+R), and suggestions."""
+    """Read user input with prompt, history search (Ctrl+R), and suggestions.
+
+    Uses PromptToolkitInput for rich slash command menu with fuzzy matching
+    and arrow key navigation when prompt_toolkit is available.
+    """
     global _vim_mode, _prompt_suggestions
 
+    # Try PromptToolkitInput first for rich slash menu
+    try:
+        from draguniteus.repl.prompt_toolkit_input import PromptToolkitInput
+
+        def on_ctrl_r():
+            from draguniteus.repl import get_history_manager
+            history_mgr = get_history_manager()
+            return history_mgr.interactive_search()
+
+        def on_ctrl_t():
+            global _show_task_list
+            _show_task_list = not _show_task_list
+
+        pt_input = PromptToolkitInput(
+            on_ctrl_r=on_ctrl_r,
+            on_ctrl_t=on_ctrl_t,
+        )
+        result = pt_input.read_line("❯ ")
+        if result:
+            from draguniteus.repl import get_history_manager
+            history_mgr = get_history_manager()
+            history_mgr.add(result)
+        return result
+    except Exception:
+        pass
+
+    # Fallback to basic input if PromptToolkitInput fails
     try:
         import sys
         import tty
@@ -1579,6 +1645,27 @@ def _read_input() -> str:
                 sys.stdout.write(ch)
                 sys.stdout.flush()
                 line += ch
+
+                # Show slash command suggestions dynamically as user types
+                if line.startswith("/"):
+                    # Show matching slash commands
+                    slash_completions = _get_slash_command_completions()
+                    prefix = line.lstrip("/").lower()
+                    if prefix:
+                        matches = [c for c in slash_completions if c.startswith(prefix)]
+                    else:
+                        # Show all commands when just "/"
+                        matches = slash_completions[:15]
+                    if matches:
+                        # Erase current line, show suggestions, redraw prompt
+                        sys.stdout.write("\r" + " " * 100 + "\r")
+                        suggestion_line = "  " + "  ".join(f"/{m}" for m in matches[:10])
+                        sys.stdout.write(f"\033[90m{suggestion_line}\033[0m\n")
+                        sys.stdout.write(f"\033[38;5;141m❯\033[0m {line}")
+                        sys.stdout.flush()
+                    elif prefix and not matches:
+                        # No matches - show nothing, just continue
+                        pass
 
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)

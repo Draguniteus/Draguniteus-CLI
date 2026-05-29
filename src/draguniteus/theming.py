@@ -1,6 +1,7 @@
 """Theming: clean terminal output matching Claude Code's style."""
 from __future__ import annotations
 
+import os
 import sys
 import time
 from typing import Any
@@ -9,6 +10,36 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
+
+# ------------------------------------------------------------------
+# Windows ANSI Support
+# ------------------------------------------------------------------
+
+def _enable_windows_ansi() -> None:
+    """Enable ANSI escape code support on Windows 10+.
+
+    Windows conhost (PowerShell, cmd.exe) requires Virtual Terminal
+    Processing to be enabled for ANSI escape codes to work.
+    This is done by setting ENABLE_VIRTUAL_TERMINAL_PROCESSING via SetConsoleMode.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        STD_OUTPUT_HANDLE = -11
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        RESET_MODE = 0x0002
+        h = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        mode = ctypes.c_ulong()
+        if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+            # Enable virtual terminal processing
+            kernel32.SetConsoleMode(h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+    except Exception:
+        pass
+
+# Enable Windows ANSI on module import
+_enable_windows_ansi()
 
 # ------------------------------------------------------------------
 # Console
@@ -215,10 +246,15 @@ def thinking(text: str) -> Text:
     return Text(text, style="italic dim")
 
 # ------------------------------------------------------------------
-# Clean separator
+# Clean separator (full terminal width)
 # ------------------------------------------------------------------
 
-SEPARATOR = "─" * 68
+def get_separator() -> str:
+    """Return a full-width divider matching terminal width."""
+    import shutil
+    return "─" * shutil.get_terminal_size().columns
+
+SEPARATOR = get_separator()
 
 # ------------------------------------------------------------------
 # Thinking verbs (minimal, no dragon branding)
@@ -265,9 +301,19 @@ def print_welcome(
     effort: str = "high effort",
     path: str | None = None,
 ) -> None:
-    """Print branded header matching Claude Code's box-drawing style."""
+    """Print branded header matching Claude Code's box-drawing style.
+
+    Layout matches Claude Code:
+    - Full-width top divider
+    - Header (brand, model, path)
+    - Full-width middle divider (frames the prompt area)
+    - Prompt line follows in caller
+    - Full-width bottom divider (after prompt)
+    - ? for shortcuts
+    """
     import os
     import sys
+    import shutil
     if not full_drama:
         return
     try:
@@ -276,8 +322,9 @@ def print_welcome(
         if path is None:
             path = os.getcwd()
 
+        cols = shutil.get_terminal_size().columns
+
         # Claude Code header characters: ▐▛███▜▌ (U+2590, U+259B, U+2588, etc.)
-        # These render correctly in Windows terminals via UTF-8
         header_line1 = " ▐▛███▜▌   Draguniteus v0.1.0"
         header_line2 = "▝▜█████▛▘  " + model + " with " + effort + " · API Usage Billing"
         cwd_line = "  ▘▘ ▝▝    " + path
@@ -291,13 +338,14 @@ def print_welcome(
                 sys.stdout.buffer.write(s.encode('utf-8', errors='replace'))
                 sys.stdout.buffer.flush()
 
+        # Full-width top divider
+        write_out("─" * cols + "\n")
+        # Header
         write_out(f"{CLAUDE_PURPLE}{BRIGHT}{header_line1}{RESET}\n")
         write_out(f"{CLAUDE_PURPLE}{BRIGHT}{header_line2}{RESET}\n")
-        write_out("\n")
         write_out(f"{DIM}{cwd_line}{RESET}\n")
-        write_out("\n")
-        write_out("─" * 76 + "\n")
-        write_out("\n")
+        # Full-width middle divider (frames prompt area)
+        write_out("─" * cols + "\n")
     except Exception as e:
         print("Draguniteus v0.1.0")
 
@@ -331,8 +379,8 @@ def print_thinking(seconds: float, full_drama: bool = True) -> None:
             pass
 
 def print_divider(full_drama: bool = True) -> None:
-    """Print clean separator between turns."""
-    _print(SEPARATOR)
+    """Print clean separator between turns (full terminal width)."""
+    _print(get_separator())
 
 def print_prompt(full_drama: bool = True) -> str:
     """Print the interactive prompt and return user input."""
@@ -454,6 +502,18 @@ def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
     except Exception:
         try:
             print(bar)
+        except Exception:
+            pass
+
+
+def print_shortcuts_line() -> None:
+    """Print '? for shortcuts' line (Claude Code style, dim gray)."""
+    try:
+        sys.stdout.buffer.write(f"{DIM}  ? for shortcuts{RESET}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        try:
+            print(f"{DIM}  ? for shortcuts{RESET}")
         except Exception:
             pass
 

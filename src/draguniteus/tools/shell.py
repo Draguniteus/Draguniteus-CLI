@@ -136,19 +136,19 @@ def tool_bash(
         line_count = 0
         start_time = time.time()
 
-        # Read in non-blocking manner using threads for stdout/stderr
-        import threading
-
         def read_stream(stream, chunks, is_stderr=False):
             try:
                 for line in stream:
                     if line is not None:
+                        line = line.rstrip('\n\r')
                         chunks.append(line)
+                        # Stream in real-time — live_output_line handles the None check internally
+                        live_output_line(line, is_stderr)
             except Exception:
                 pass
 
-        stdout_thread = threading.Thread(target=read_stream, args=(proc.stdout, stdout_chunks))
-        stderr_thread = threading.Thread(target=read_stream, args=(proc.stderr, stderr_chunks))
+        stdout_thread = threading.Thread(target=read_stream, args=(proc.stdout, stdout_chunks, False))
+        stderr_thread = threading.Thread(target=read_stream, args=(proc.stderr, stderr_chunks, True))
         stdout_thread.start()
         stderr_thread.start()
 

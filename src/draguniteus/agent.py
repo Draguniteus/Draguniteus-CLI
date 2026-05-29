@@ -245,19 +245,26 @@ def stream_one_turn(
     Yields tuples of (text, thinking, pending_tool_calls_or_None, is_final, thinking_active, thinking_done, estimated_tokens).
     - text: partial response text accumulated so far
     - thinking: partial thinking text accumulated so far
-    - pending_tool_calls: list of completed tool calls when a tool is fully parsed (None otherwise)
-    - is_final: True only when the streaming phase is done (all events drained)
+    - pending_tool_calls: list of completed tool calls (executed in parallel during streaming)
+    - is_final: True only when the streaming phase is done (all events drained AND tools executed)
     - thinking_active: True while thinking content is being received
     - thinking_done: True once the thinking content block has ended
     - estimated_tokens: estimated output token count (real-time estimate during streaming)
 
-    After is_final=True with tool_calls populated, the caller must execute tools
-    and call back with results. This function does NOT execute tools — it only
-    streams and yields. This allows the caller to display progressively during streaming.
+    Tools are executed in parallel as they are completed (via on_tool_call callback),
+    not after streaming finishes. This enables overlapping I/O like Claude Code.
     """
     tools = client.get_tool_schemas()
     console = _console
     handler = StreamHandler(console, full_drama, on_tool_call=on_tool_call, on_tool_start=on_tool_start, on_tool_use_start=on_tool_use_start)
+
+    # Thread pool for parallel tool execution during streaming
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    tool_executor = ThreadPoolExecutor(max_workers=4)
+
+    # Track pending tool executions and their futures
+    pending_tool_futures: dict = {}  # tool_call_id -> future
+    completed_tool_results: list = []
 
     # --- Thinking Router: decide thinking vs direct ---
     router = None
@@ -310,10 +317,69 @@ def stream_one_turn(
     )
 
     pending_tool_calls: list[dict] = []
+    pending_tool_futures: list[tuple[dict, Any]] = []  # (tool_call, future)
+
+    # Helper: execute a single tool call (for parallel execution)
+    def _exec_single_tool(tc: dict) -> dict:
+        """Execute a single tool call and return result dict."""
+        import json
+        name = tc.get("name", "")
+        args = tc.get("args", "")
+        try:
+            parsed = json.loads(args) if args else {}
+        except json.JSONDecodeError:
+            parsed = {"raw": args}
+
+        # Get nested executor if available
+        ne = None
+        if getattr(handler, "_nested_tool_enabled", True):
+            try:
+                from draguniteus.tools.nested_tool_executor import NestedToolExecutor
+                from draguniteus.tools.mcp_tools import tool_mcp_call as mcp_call_fn
+                ne = NestedToolExecutor(
+                    max_depth=getattr(handler, "_nested_tool_max_depth", 5),
+                    tool_map=dict(TOOL_MAP),
+                    mcp_tool_func=mcp_call_fn,
+                )
+            except Exception:
+                pass
+
+        if name.startswith("mcp__"):
+            if ne:
+                try:
+                    result = ne._call_mcp_tool(
+                        type("Node", (), {"name": name, "args": parsed, "depth": 0, "id": name})()
+                    )
+                except Exception as e:
+                    result = f"MCP tool error: {e}"
+            else:
+                result = "MCP tool error: nested executor not available"
+            return {"tool": name, "result": result, "success": not str(result or "").startswith("MCP tool error"), "parsed": parsed}
+
+        tool_fn = TOOL_MAP.get(name)
+        if tool_fn:
+            try:
+                result = tool_fn(**parsed)
+            except Exception as e:
+                result = f"Tool error: {e}"
+        else:
+            result = f"Unknown tool: {name}"
+
+        return {
+            "tool": name,
+            "result": result,
+            "success": result and not str(result).startswith("Tool error") and not str(result).startswith("Unknown tool"),
+            "parsed": parsed,
+        }
 
     for event in stream:
         result = handler.handle_event(event)
         if result:
+            # Tool completed - start execution in background thread IMMEDIATELY
+            # This enables overlapping I/O like Claude Code
+            tool_name = result.get("name", "")
+            future = tool_executor.submit(_exec_single_tool, result)
+            pending_tool_futures.append((result, future))
             pending_tool_calls.append(result)
 
         text = handler.get_text()
@@ -328,10 +394,21 @@ def stream_one_turn(
         thinking_done = handler.is_thinking_done()
 
         # Yield progressively: text and thinking on every event so the caller
-        # can display them in real-time. tool_calls remain None until is_final.
-        yield text, thinking, None, False, thinking_active, thinking_done, estimated_tokens
+        # can display them in real-time. tool_calls is the list accumulated so far.
+        yield text, thinking, list(pending_tool_calls), False, thinking_active, thinking_done, estimated_tokens
 
-    # Final yield with tool calls and usage
+    # Final yield - wait for all tool executions to complete
+    tool_executor.shutdown(wait=True)
+
+    # Collect all tool results
+    tool_results = []
+    for tc, future in pending_tool_futures:
+        try:
+            result = future.result()
+            tool_results.append(result)
+        except Exception as e:
+            tool_results.append({"tool": tc.get("name", "?"), "result": f"Execution error: {e}", "success": False, "parsed": {}})
+
     in_tok, out_tok = handler.get_usage()
     is_final = True
     thinking_active = handler.is_thinking_active()
@@ -341,7 +418,8 @@ def stream_one_turn(
     handler._input_tokens = in_tok
     handler._output_tokens = out_tok
     stream_one_turn._last_usage = in_tok + out_tok
-    yield handler.get_text(), handler.get_thinking(), pending_tool_calls, True, thinking_active, thinking_done, estimated_tokens
+    # Yield tool_results (executed) instead of pending_tool_calls
+    yield handler.get_text(), handler.get_thinking(), tool_results, True, thinking_active, thinking_done, estimated_tokens
 
 
 def execute_tool_calls(

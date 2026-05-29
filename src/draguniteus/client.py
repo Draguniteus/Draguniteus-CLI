@@ -93,9 +93,6 @@ class DraguniteusClient:
         if "system" in kwargs and kwargs["system"]:
             kwargs["system"] = str(kwargs["system"])
 
-        # MiniMax doesn't support betas — strip if present
-        kwargs.pop("betas", None)
-
         return self._sync.messages.create(**kwargs)
 
     def create(

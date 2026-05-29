@@ -262,8 +262,17 @@ SEPARATOR = get_separator()
 
 THINKING_VERBS = ["Mulling", "Pondering", "Considering", "Examining", "Analyzing", "Processing"]
 
+import time as _time
+_last_verb_change = [0.0]
+_last_verb_idx = [0]
+
 def get_thinking_verb() -> str:
-    return THINKING_VERBS[hash(str(__import__("time").time())) % len(THINKING_VERBS)]
+    """Get thinking verb, rate-limited to avoid spam."""
+    now = _time.time()
+    if now - _last_verb_change[0] > 2.0:
+        _last_verb_idx[0] = (_last_verb_idx[0] + 1) % len(THINKING_VERBS)
+        _last_verb_change[0] = now
+    return THINKING_VERBS[_last_verb_idx[0]]
 
 # ------------------------------------------------------------------
 # Print helpers

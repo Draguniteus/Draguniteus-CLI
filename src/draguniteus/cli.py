@@ -1243,6 +1243,12 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
             if _full_drama:
                 from draguniteus.theming import print_thinking
                 print_thinking(elapsed, _full_drama)
+                # Clear the thinking line now that streaming is done
+                try:
+                    sys.stdout.buffer.write("\x1b[2K\r".encode('utf-8'))
+                    sys.stdout.buffer.flush()
+                except Exception:
+                    pass
 
             # Show tool bullets (tools shown during streaming via callbacks, this is backup display)
             # Tool execution now happens inside stream_one_turn (in parallel during streaming)

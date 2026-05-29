@@ -1168,6 +1168,8 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
             pending_tool_calls = tool_calls
 
         if is_final:
+            elapsed = time.time() - start_time
+
             # Show tool context BEFORE stopping display and executing tools
             if pending_tool_calls and display:
                 for tc in pending_tool_calls:
@@ -1181,6 +1183,31 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
             # Stop the live display cleanly
             if display:
                 display.stop()
+
+            # Show thinking content in a collapsed block after streaming
+            thinking_len = len(thinking_text) if thinking_text else 0
+            if thinking_len > 50 and _full_drama:
+                try:
+                    dim = "\033[90m"
+                    reset = "\033[0m"
+                    thinking_snippet = thinking_text[:500]
+                    if thinking_len > 500:
+                        thinking_snippet += "..."
+                    lines = thinking_snippet.split('\n')[:20]
+                    sys.stdout.buffer.write(f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                    for ln in lines:
+                        sys.stdout.buffer.write(f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
+                    if thinking_len > 500 or len(lines) > 20:
+                        sys.stdout.buffer.write(f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.write(f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.flush()
+                except Exception:
+                    pass
+
+            # Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+            if _full_drama:
+                from draguniteus.theming import print_thinking
+                print_thinking(elapsed, _full_drama)
 
             # Fire notification hooks for turn completion
             try:

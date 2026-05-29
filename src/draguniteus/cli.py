@@ -592,6 +592,8 @@ def main(
         current_tokens = 0
         in_tok = 0
         out_tok = 0
+        # Buffer response text - do NOT stream during loop, only at is_final
+        buffered_response = ""
 
         # Wire callbacks for tool display during streaming
         def on_tool_start_cb(tool_name: str, args_display: str = "") -> None:
@@ -609,23 +611,13 @@ def main(
             on_tool_call=on_tool_call_cb,
             on_tool_start=on_tool_start_cb,
         ):
-            # Track accumulated thinking (for display.update which shows thinking line with content preview)
+            # Track accumulated thinking
             if thinking:
                 thinking_text = thinking
 
-            # Stream response text progressively (character by character)
+            # Buffer response text - do NOT stream during loop
             if text:
                 response_text = text
-                if display and _full_drama:
-                    new_text = response_text[prev_response_len:]
-                    if new_text:
-                        for ch in new_text:
-                            try:
-                                sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
-                            except Exception:
-                                pass
-                        sys.stdout.buffer.flush()
-                        prev_response_len = len(response_text)
 
             # Track search context
             if tool_calls and display:
@@ -664,9 +656,10 @@ def main(
                     display.set_search_context(search_patterns, files_reading)
 
             # current_tokens and thinking state now come from the stream tuple directly
+            # Thinking line shows ONLY status (spinner + verb + time), NOT full thinking content
             if display:
                 display.update(
-                    thinking=thinking_text,
+                    thinking="",  # Don't pass full thinking content - only status updates via thinking_active/done
                     response=response_text,
                     tokens=current_tokens,
                     thinking_active=thinking_active,
@@ -679,28 +672,31 @@ def main(
             if is_final:
                 elapsed = time.time() - start
 
-                # Flush any remaining incomplete line
-                remaining = response_text[prev_response_len:]
-                if remaining and _full_drama:
-                    try:
-                        sys.stdout.buffer.write(remaining.encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()
-                    except Exception:
-                        pass
-
-                # Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+                # Step 1: Clear thinking line FIRST and move to fresh line
                 if _full_drama:
-                    from draguniteus.theming import print_thinking
-                    print_thinking(elapsed, _full_drama)
-                    # Clear the thinking line and move to fresh line for response
                     try:
                         sys.stdout.buffer.write("\x1b[2K\r\n".encode('utf-8'))
                         sys.stdout.buffer.flush()
                     except Exception:
                         pass
-                    # Show thinking content after streaming completes (only if not shown during streaming)
-                    if thinking_text and display:
-                        display.show_thinking_content(thinking_text)
+
+                # Step 2: Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+                if _full_drama:
+                    from draguniteus.theming import print_thinking
+                    print_thinking(elapsed, _full_drama)
+
+                # Step 3: Show thinking content (after thinking line is cleared)
+                if thinking_text and display:
+                    display.show_thinking_content(thinking_text)
+
+                # Step 4: Stream response text character-by-character on the fresh line
+                if _full_drama and response_text:
+                    for ch in response_text:
+                        try:
+                            sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
+                        except Exception:
+                            pass
+                    sys.stdout.buffer.flush()
 
                 # Tool execution now happens inside stream_one_turn (in parallel during streaming)
                 # At is_final=True, tool_calls is the executed tool_results
@@ -1147,23 +1143,13 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
         on_tool_call=on_tool_call_cb,
         on_tool_start=on_tool_start_cb,
     ):
-        # Track accumulated thinking (display.update shows thinking line with content preview)
+        # Track accumulated thinking
         if thinking:
             thinking_text = thinking
 
-        # Stream response text progressively (character by character)
+        # Buffer response text - do NOT stream during loop
         if text:
             response_text = text
-            if display and _full_drama:
-                new_text = response_text[prev_response_len:]
-                if new_text:
-                    for ch in new_text:
-                        try:
-                            sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
-                        except Exception:
-                            pass
-                    sys.stdout.buffer.flush()
-                    prev_response_len = len(response_text)
 
         # Detect search tool calls to update search context
         if tool_calls and display:
@@ -1216,10 +1202,10 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
         except Exception:
             current_tokens = 0
 
-        # Update the live display
+        # Update the live display - thinking line shows ONLY status, not full content
         if display:
             display.update(
-                thinking=thinking_text,
+                thinking="",  # Don't pass full thinking content - only status updates
                 response=response_text,
                 tokens=current_tokens,
                 thinking_active=thinking_active,
@@ -1233,28 +1219,31 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
         if is_final:
             elapsed = time.time() - start_time
 
-            # Flush remaining response text
-            remaining = response_text[prev_response_len:]
-            if remaining and _full_drama:
-                try:
-                    sys.stdout.buffer.write(remaining.encode('utf-8', errors='replace'))
-                    sys.stdout.buffer.flush()
-                except Exception:
-                    pass
-
-            # Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+            # Step 1: Clear thinking line FIRST and move to fresh line
             if _full_drama:
-                from draguniteus.theming import print_thinking
-                print_thinking(elapsed, _full_drama)
-                # Clear the thinking line and move to fresh line for response
                 try:
                     sys.stdout.buffer.write("\x1b[2K\r\n".encode('utf-8'))
                     sys.stdout.buffer.flush()
                 except Exception:
                     pass
-                # Show thinking content after streaming completes (only if not shown during streaming)
-                if thinking_text and display:
-                    display.show_thinking_content(thinking_text)
+
+            # Step 2: Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+            if _full_drama:
+                from draguniteus.theming import print_thinking
+                print_thinking(elapsed, _full_drama)
+
+            # Step 3: Show thinking content (after thinking line is cleared)
+            if thinking_text and display:
+                display.show_thinking_content(thinking_text)
+
+            # Step 4: Stream response text character-by-character on the fresh line
+            if _full_drama and response_text:
+                for ch in response_text:
+                    try:
+                        sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
+                    except Exception:
+                        pass
+                sys.stdout.buffer.flush()
 
             # Show tool bullets (tools shown during streaming via callbacks, this is backup display)
             # Tool execution now happens inside stream_one_turn (in parallel during streaming)

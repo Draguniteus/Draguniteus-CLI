@@ -692,6 +692,12 @@ def main(
                 if _full_drama:
                     from draguniteus.theming import print_thinking
                     print_thinking(elapsed, _full_drama)
+                    # Clear the thinking line now that streaming is done
+                    try:
+                        sys.stdout.buffer.write("\x1b[2K\r".encode('utf-8'))
+                        sys.stdout.buffer.flush()
+                    except Exception:
+                        pass
 
                 # Tool execution now happens inside stream_one_turn (in parallel during streaming)
                 # At is_final=True, tool_calls is the executed tool_results

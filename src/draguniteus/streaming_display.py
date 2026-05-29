@@ -224,7 +224,7 @@ class StreamingDisplay:
 
         # Build the thinking line: spinner + verb + elapsed + tokens + intensity (NO content preview)
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
-        line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
+        line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}\n"
 
         try:
             # Use ANSI clear line + carriage return for reliable Windows overwrite

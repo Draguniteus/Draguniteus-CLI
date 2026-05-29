@@ -259,10 +259,13 @@ class PromptToolkitInput:
 
         try:
             return self._read_line_pt(prompt)
-        except (KeyboardInterrupt, EOFError):
+        except EOFError:
+            # EOF means stdin closed (pipe mode) — re-raise to propagate
             raise
-        except Exception as e:
-            # Fallback on unexpected errors (but not EOFError which means stdin closed)
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            # Any other error (missing mouse support, etc.) — fallback to basic input
             return self._fallback_input(prompt)
 
     def _read_line_pt(self, prompt: str) -> str:

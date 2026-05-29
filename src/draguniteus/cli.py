@@ -542,7 +542,7 @@ def main(
         except Exception:
             pass
 
-        response_text, tool_results, in_tok, out_tok, thinking = run_one_turn(_client, messages, _get_system_prompt(messages), _cfg, _full_drama)
+        response_text, tool_results, in_tok, out_tok, thinking_text = run_one_turn(_client, messages, _get_system_prompt(messages), _cfg, _full_drama)
         elapsed = time.time() - start
 
         # Clear active background task after turn completes
@@ -580,8 +580,8 @@ def main(
             pass
 
         # Show thinking inline if present
-        if thinking and _full_drama:
-            display_thinking = thinking[:300] + "..." if len(thinking) > 300 else thinking
+        if thinking_text and _full_drama:
+            display_thinking = thinking_text[:300] + "..." if len(thinking_text) > 300 else thinking_text
             _print(thinking(f"[Thinking... {display_thinking}]"))
 
         if response_text:

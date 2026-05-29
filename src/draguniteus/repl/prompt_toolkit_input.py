@@ -169,11 +169,14 @@ class VimKeys:
             if navigation_callback:
                 navigation_callback('bottom')
 
-        @kb.add('/', filter=has_focus)
+        @kb.add('/')
         def handle_slash(event):
             event.current_buffer.insert('/')
             # Trigger completion menu after inserting /
-            event.current_buffer.start_completion(select_first=False)
+            try:
+                event.current_buffer.start_completion(select_first=False)
+            except Exception:
+                pass
 
         @kb.add('n', filter=has_focus)
         def handle_n(event):

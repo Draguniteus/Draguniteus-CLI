@@ -182,10 +182,12 @@ class StreamingDisplay:
             self._thinking_print()
 
     def _thinking_print(self) -> None:
-        """Print thinking line via simple \r overwrite (Windows-compatible).
+        """Print thinking line that overwrites itself in-place.
 
-        Uses only \r (carriage return) for in-place overwriting, no ANSI cursor moves.
-        The thinking line includes a preview of actual thinking content.
+        Uses \x1b[2K (erase line) + \r (return to column 0) to reliably
+        overwrite the thinking line regardless of cursor position.
+        Does NOT include trailing \n so response text can follow on same line
+        after thinking line is cleared at is_final.
         """
         elapsed_str = self._format_elapsed(self._elapsed)
 
@@ -216,23 +218,19 @@ class StreamingDisplay:
         if self._workflow_phase:
             phase_badge = f" {self._workflow_phase}"
 
-        # Build actual thinking content preview (first 100 chars)
-        # NOTE: We NO LONGER include thinking content in the thinking line.
-        # It causes visual overlap with response text when content is long.
-        # The thinking line shows only: spinner + verb + elapsed + tokens + intensity
-        thinking_preview = ""
-
-        # Build the thinking line: spinner + verb + elapsed + tokens + intensity (NO content preview)
+        # Build the thinking line: spinner + verb + elapsed + tokens + intensity
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
-        line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}\n"
+        line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
         try:
-            # Use ANSI clear line + carriage return for reliable Windows overwrite
-            clear_and_home = "\x1b[2K\r"  # Erase line + return to column 0
-            sys.stdout.buffer.write(clear_and_home.encode('utf-8'))
+            # Erase entire line and return to column 0, then write new thinking line
+            # \x1b[2K = erase entire line, \r = return to column 0
+            erase_and_home = "\x1b[2K\r"
+            sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
             sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
             self._last_thinking_len = len(line)
+            self._showing_thinking = True
         except Exception:
             pass
 

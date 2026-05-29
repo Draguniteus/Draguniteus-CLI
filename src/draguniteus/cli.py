@@ -357,6 +357,9 @@ def main(
     if allow_dangerously_skip_permissions and _permission_mode == "plan":
         _permission_mode = "bypassPermissions"
 
+    # Local alias for the module-level piped_command flag
+    _piped_command: str | None = None
+
     if not prompt and not sys.stdin.isatty():
         piped = sys.stdin.read().strip()
         # If piped input starts with /, treat as REPL commands

@@ -1243,9 +1243,9 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
             if _full_drama:
                 from draguniteus.theming import print_thinking
                 print_thinking(elapsed, _full_drama)
-                # Clear the thinking line now that streaming is done
+                # Clear the thinking line and move to fresh line for response
                 try:
-                    sys.stdout.buffer.write("\x1b[2K\r".encode('utf-8'))
+                    sys.stdout.buffer.write("\x1b[2K\r\n".encode('utf-8'))
                     sys.stdout.buffer.flush()
                 except Exception:
                     pass

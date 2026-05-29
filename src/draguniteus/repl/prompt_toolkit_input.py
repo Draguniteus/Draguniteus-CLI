@@ -171,11 +171,15 @@ class VimKeys:
 
         @kb.add('/')
         def handle_slash(event):
+            # Insert / and trigger completion menu
             event.current_buffer.insert('/')
-            # The completer with complete_while_typing=True should auto-trigger on /
-            # If not, force it
+            # Request completion menu to open
             try:
-                event.current_buffer.start_completion(select_first=False)
+                from prompt_toolkit.application import get_app
+                app = get_app()
+                if app:
+                    # Force completion menu to appear
+                    event.current_buffer.start_completion(select_first=False)
             except Exception:
                 pass
 

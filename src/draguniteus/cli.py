@@ -698,6 +698,9 @@ def main(
                         sys.stdout.buffer.flush()
                     except Exception:
                         pass
+                    # Show thinking content after streaming completes (only if not shown during streaming)
+                    if thinking_text and display:
+                        display.show_thinking_content(thinking_text)
 
                 # Tool execution now happens inside stream_one_turn (in parallel during streaming)
                 # At is_final=True, tool_calls is the executed tool_results
@@ -1249,6 +1252,9 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                     sys.stdout.buffer.flush()
                 except Exception:
                     pass
+                # Show thinking content after streaming completes (only if not shown during streaming)
+                if thinking_text and display:
+                    display.show_thinking_content(thinking_text)
 
             # Show tool bullets (tools shown during streaming via callbacks, this is backup display)
             # Tool execution now happens inside stream_one_turn (in parallel during streaming)

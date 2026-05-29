@@ -182,10 +182,9 @@ class StreamingDisplay:
         if self.full_drama:
             self._thinking_print()
 
-        # Show thinking content when thinking block ends (only once)
-        if thinking_done and thinking and not self._thinking_content_shown:
-            self.show_thinking_content(thinking)
-            self._thinking_content_shown = True
+        # NOTE: Thinking content is NOT shown during streaming to avoid interleaving issues.
+        # The \x1b[2K\r can only erase the current line, not content printed on lines below.
+        # Thinking content will be shown after streaming completes via show_thinking_content().
 
     def _thinking_print(self) -> None:
         """Print thinking line that overwrites itself in-place.

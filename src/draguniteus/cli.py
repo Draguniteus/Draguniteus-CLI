@@ -565,33 +565,17 @@ def main(
         for text, thinking, tool_calls, is_final in stream_one_turn(
             _client, messages, _get_system_prompt(messages), _cfg, _full_drama
         ):
+            # Track accumulated thinking and response text
             if thinking:
                 thinking_text = thinking
-                # Show thinking block the moment it appears
-                if not thinking_shown and thinking_text and display:
-                    thinking_shown = True
-                    # Clear line, print thinking block
-                    try:
-                        sys.stdout.write("\r" + " " * 200 + "\r")
-                        cyan = "\033[36m"
-                        dim = "\033[90m"
-                        reset = "\033[0m"
-                        snippet = thinking_text[:300]
-                        if len(thinking_text) > 300:
-                            snippet += "..."
-                        header = f"{cyan}▌ Thinking ▐{reset} {dim}{snippet}{reset}"
-                        sys.stdout.write(header + "\n\n")
-                        sys.stdout.flush()
-                    except Exception:
-                        pass
-
             if text:
                 response_text = text
                 # Print ONLY the new portion of response text progressively
+                # (Rich/Console buffers output; direct stdout.buffer writes for streaming)
                 if response_text and display:
                     new_text = response_text[prev_response_len:]
                     if new_text and _full_drama:
-                        # Print new text chunks — only print complete lines to avoid mid-word splits
+                        # Print new text chunks — only complete lines to avoid mid-word splits
                         remaining = new_text
                         while remaining:
                             nl_idx = remaining.find('\n')
@@ -602,8 +586,8 @@ def main(
                                 # Hold incomplete line — will print on next iteration or at end
                                 break
                             try:
-                                sys.stdout.write(chunk)
-                                sys.stdout.flush()
+                                sys.stdout.buffer.write(chunk.encode('utf-8', errors='replace'))
+                                sys.stdout.buffer.flush()
                             except Exception:
                                 pass
                         prev_response_len = len(response_text) - len(remaining)

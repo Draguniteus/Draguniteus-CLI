@@ -1,0 +1,53 @@
+# draguniteusignore — patterns ignored by Glob and Grep tools
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (for JS/TS projects)
+node_modules/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Draguniteus internals
+.draguniteus/
+*.log
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.tmp

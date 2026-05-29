@@ -315,16 +315,74 @@ def tool_multi_edit(file_path: str, old_new_pairs: list[dict]) -> str:
     return f"ok — applied {len(old_new_pairs)} edits to {file_path}"
 
 
+# ---------------------------------------------------------------------------
+# .draguniteusignore support
+# ---------------------------------------------------------------------------
+
+_DRAGUNITEUSIGNORE_CACHE: dict[Path, list[str]] = {}
+
+
+def _load_ignore_patterns(root: Path) -> list[str]:
+    """Load .draguniteusignore patterns for a given root directory."""
+    if root in _DRAGUNITEUSIGNORE_CACHE:
+        return _DRAGUNITEUSIGNORE_CACHE[root]
+
+    ignore_file = root / ".draguniteusignore"
+    patterns: list[str] = []
+    if ignore_file.exists():
+        try:
+            patterns = [
+                line.strip()
+                for line in ignore_file.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+        except Exception:
+            pass
+
+    _DRAGUNITEUSIGNORE_CACHE[root] = patterns
+    return patterns
+
+
+def _match_ignore(path: Path, root: Path, patterns: list[str]) -> bool:
+    """Check if a path matches any ignore pattern."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+
+    rel_parts = rel.parts
+    for pattern in patterns:
+        if pattern.startswith("**/"):
+            suffix = pattern[3:]
+            if str(rel).endswith(suffix) or any(p.endswith(suffix) for p in rel_parts):
+                return True
+        elif pattern.startswith("!"):
+            continue
+        elif "/" in pattern or "\\" in pattern:
+            if str(rel) == pattern or str(rel).startswith(pattern + "/"):
+                return True
+        else:
+            if pattern in rel_parts:
+                return True
+    return False
+
+
 def tool_glob(pattern: str, path: str | None = None) -> str:
-    """Find files matching a glob pattern."""
+    """Find files matching a glob pattern, respecting .draguniteusignore."""
     import glob as glob_module
 
     root = _normalize_path(path) if path else Path.cwd()
     # glob expects pattern relative to cwd — convert to full pattern
     full_pattern = str(root / pattern)
 
+    ignore_patterns = _load_ignore_patterns(root)
+
     try:
         matches = glob_module.glob(full_pattern, recursive=True)
+        # Filter out ignored files
+        if ignore_patterns:
+            filtered = [m for m in matches if not _match_ignore(Path(m), root, ignore_patterns)]
+            matches = filtered
         if not matches:
             return f"No files found matching {pattern}"
         return "\n".join(sorted(matches))
@@ -364,6 +422,12 @@ def tool_grep(
 
     if search_path.is_dir():
         file_paths = list(search_path.rglob(glob or "*"))
+
+    # Filter out .draguniteusignore files
+    ignore_patterns = _load_ignore_patterns(search_path)
+    if ignore_patterns:
+        filtered = [fp for fp in file_paths if not _match_ignore(fp, search_path, ignore_patterns)]
+        file_paths = filtered
 
     for fp in file_paths:
         if not fp.is_file():

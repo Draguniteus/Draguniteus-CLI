@@ -245,13 +245,39 @@ Draguniteus proves this stack works by running all four models simultaneously on
 
 ---
 
+## Installation
+
+### pip (fastest)
+```bash
+pip install -e .
+draguniteus
+```
+
+### pipx (recommended — isolated, global `draguniteus` command)
+```bash
+pipx install -e .
+draguniteus
+```
+
+### uv (fastest pip alternative)
+```bash
+uv pip install -e .
+draguniteus
+```
+
+### Docker
+```bash
+docker run -it --rm \
+  -e MINIMAX_API_KEY=$MINIMAX_API_KEY \
+  -v $(pwd):/workspace \
+  ghcr.io/draguniteus/draguniteus-cli
+```
+
+---
+
 ## Quick Start
 
 ```bash
-git clone https://github.com/Draguniteus/Draguniteus-CLI.git
-cd Draguniteus-CLI
-pip install -e .
-
 # Set your MiniMax API key
 export MINIMAX_API_KEY=your_key_here
 

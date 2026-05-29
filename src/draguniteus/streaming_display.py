@@ -279,8 +279,8 @@ class StreamingDisplay:
                 if len(lines) > 3:
                     preview = "\n".join(lines[:3]) + "\n  [...]"
 
-            # Print thinking content with dim styling
-            thinking_display = f"\n  {dim}{preview}{reset}\n"
+            # Print thinking content with dim styling (no leading \n - thinking line already ended with \n)
+            thinking_display = f"  {dim}{preview}{reset}\n"
             sys.stdout.buffer.write(thinking_display.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
         except Exception:

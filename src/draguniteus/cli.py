@@ -552,6 +552,8 @@ def main(
 
         thinking_text = ""
         response_text = ""
+        prev_response_len = 0
+        thinking_shown = False
         pending_tool_calls: list[dict] = []
         tool_results: list[dict] = []
         search_patterns: list[str] = []
@@ -565,8 +567,46 @@ def main(
         ):
             if thinking:
                 thinking_text = thinking
+                # Show thinking block the moment it appears
+                if not thinking_shown and thinking_text and display:
+                    thinking_shown = True
+                    # Clear line, print thinking block
+                    try:
+                        sys.stdout.write("\r" + " " * 200 + "\r")
+                        cyan = "\033[36m"
+                        dim = "\033[90m"
+                        reset = "\033[0m"
+                        snippet = thinking_text[:300]
+                        if len(thinking_text) > 300:
+                            snippet += "..."
+                        header = f"{cyan}▌ Thinking ▐{reset} {dim}{snippet}{reset}"
+                        sys.stdout.write(header + "\n\n")
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+
             if text:
                 response_text = text
+                # Print ONLY the new portion of response text progressively
+                if response_text and display:
+                    new_text = response_text[prev_response_len:]
+                    if new_text and _full_drama:
+                        # Print new text chunks — only print complete lines to avoid mid-word splits
+                        remaining = new_text
+                        while remaining:
+                            nl_idx = remaining.find('\n')
+                            if nl_idx >= 0:
+                                chunk = remaining[:nl_idx + 1]
+                                remaining = remaining[nl_idx + 1:]
+                            else:
+                                # Hold incomplete line — will print on next iteration or at end
+                                break
+                            try:
+                                sys.stdout.write(chunk)
+                                sys.stdout.flush()
+                            except Exception:
+                                pass
+                        prev_response_len = len(response_text) - len(remaining)
 
             # Track search context
             if tool_calls and display:
@@ -620,6 +660,15 @@ def main(
                 pending_tool_calls = tool_calls
 
             if is_final:
+                # Flush any remaining incomplete line
+                remaining = response_text[prev_response_len:]
+                if remaining and _full_drama:
+                    try:
+                        sys.stdout.write(remaining)
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+
                 if pending_tool_calls and display:
                     for tc in pending_tool_calls:
                         tool_name = tc.get("name", "")
@@ -679,8 +728,41 @@ def main(
                                     sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
                         sys.stdout.flush()
 
-                # Print response with ● prefix
-                if response_text:
+                # Print response with ● prefix ONLY when not in dramatic mode
+                # (in dramatic mode, text was already streamed progressively above)
+                if response_text and _full_drama:
+                    # In dramatic mode, streaming already printed the response.
+                    # Just print a final newline to close any pending line.
+                    try:
+                        sys.stdout.write("\n")
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+                elif response_text and not _full_drama:
+                    text = response_text.lstrip('\n')
+                    try:
+                        sio = StringIO()
+                        c2 = Console(file=sio, force_terminal=False)
+                        c2.print(Markdown(text))
+                        rendered = sio.getvalue().rstrip('\n')
+                    except Exception:
+                        rendered = text
+                    import re
+                    clean_lines = []
+                    for line in rendered.split('\n'):
+                        clean = re.sub(r'\[/?[^]]+\]', '', line)
+                        clean = clean.strip()
+                        clean_lines.append(clean)
+                    first = True
+                    for line in clean_lines:
+                        if not line:
+                            continue
+                        prefix = "● " if first else "  "
+                        first = False
+                        try:
+                            print(prefix + line)
+                        except UnicodeEncodeError:
+                            print((prefix + line).encode('ascii', errors='replace').decode('ascii'))
                     text = response_text.lstrip('\n')
                     try:
                         sio = StringIO()

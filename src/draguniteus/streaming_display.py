@@ -228,8 +228,9 @@ class StreamingDisplay:
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
         line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
-        # Always add \n when thinking is active so it stays on its own dedicated line
-        if self._thinking_active:
+        # Only add \n when thinking is done (to separate from response)
+        # When thinking is active, keep it on same line so \r can overwrite
+        if self._thinking_done:
             line = line + "\n"
 
         try:

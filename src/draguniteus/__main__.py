@@ -4,9 +4,16 @@ import sys
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from draguniteus.cli import main
+
+def main() -> None:
+    """Entry point for the draguniteus CLI — routes through Typer app."""
+    from draguniteus.cli import app
+    import sys
+    # If sys.argv has subcommand already (from direct exe invocation), use it
+    # Otherwise use "main" as default command
+    args = sys.argv[1:] if len(sys.argv) > 1 else ["main"]
+    app(args)
+
 
 if __name__ == "__main__":
-    # Invoke typer to handle argument parsing from sys.argv
-    from draguniteus.cli import app
-    app()
+    main()

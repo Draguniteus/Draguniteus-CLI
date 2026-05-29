@@ -39,7 +39,7 @@ code-analysis = [
 ]
 
 [project.scripts]
-draguniteus = "draguniteus.cli:main"
+draguniteus = "draguniteus.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/draguniteus"]

@@ -330,7 +330,7 @@ def main(
     global _worktree_name, _resume_id, _session_id, _settings_path, _auto_mode
     global _style_name
 
-    if version:
+    if version and version is not False:
         from draguniteus import __version__
         console.print(gold(f"Draguniteus v{__version__}"))
         console.print(gray("Breathing fire into code since 2026."))

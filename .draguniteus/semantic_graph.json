@@ -2,14 +2,84 @@
   "nodes": [],
   "decisions": [
     {
-      "file_path": "Build auth",
-      "decision": "Task: Build auth\nOutcome: success\nCritique: [Self-Critique] Task: Build auth\nOutcome: success\nTools used: Write\nSuccess rate: 1/1\n\n[OK] All tools succeeded on first try.\n\nRecommendations:\n  \u2022 Efficient execution \u2014 minimal tool calls for this ta",
+      "file_path": "test_decision",
+      "decision": "We chose Python for its ecosystem",
+      "reason": [
+        "python",
+        "architecture"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:15:05Z"
+    },
+    {
+      "file_path": "Create a Flask web server",
+      "decision": "Task: Create a Flask web server\nOutcome: success\nCritique: [Self-Critique] Task: Create a Flask web server\nOutcome: success\nTools used: Write, Bash\nSuccess rate: 2/2\n\n[OK] All tools succeeded on first try.\n\nRecommendations:\n  \u2022 Bash commands can be fragile \u2014 ",
       "reason": [
         "self-improvement",
         "success"
       ],
       "author": "Draguniteus",
-      "timestamp": "2026-05-27T15:11:06Z"
+      "timestamp": "2026-05-29T03:16:14Z"
+    },
+    {
+      "file_path": "Install dependencies",
+      "decision": "Task: Install dependencies\nOutcome: failed\nCritique: [Self-Critique] Task: Install dependencies\nOutcome: failed\nTools used: Bash\nSuccess rate: 0/1\n\nFailures:\n  - Bash: pip install failed\n\nRecommendations:\n  \u2022 Consider breaking this task into smaller ste",
+      "reason": [
+        "self-improvement",
+        "failed"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:16:14Z"
+    },
+    {
+      "file_path": "Build project",
+      "decision": "Task: Build project\nOutcome: success\nCritique: [Self-Critique] Task: Build project\nOutcome: success\nTools used: Write, Bash\nSuccess rate: 2/2\n\n[OK] All tools succeeded on first try.\n\nRecommendations:\n  \u2022 Bash commands can be fragile \u2014 prefer nativ",
+      "reason": [
+        "self-improvement",
+        "success"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:16:14Z"
+    },
+    {
+      "file_path": "Test task",
+      "decision": "Task: Test task\nOutcome: success\nCritique: [Self-Critique] Task: Test task\nOutcome: success\nTools used: Write, Bash\nSuccess rate: 2/2\n\n[OK] All tools succeeded on first try.\n\nRecommendations:\n  \u2022 Bash commands can be fragile \u2014 prefer native to",
+      "reason": [
+        "self-improvement",
+        "success"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:16:14Z"
+    },
+    {
+      "file_path": "Create REST API",
+      "decision": "Task: Create REST API\nOutcome: success\nCritique: [Self-Critique] Task: Create REST API\nOutcome: success\nTools used: Write\nSuccess rate: 1/1\n\n[OK] All tools succeeded on first try.\n\nRecommendations:\n  \u2022 Efficient execution \u2014 minimal tool calls for th",
+      "reason": [
+        "self-improvement",
+        "success"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:16:14Z"
+    },
+    {
+      "file_path": "Build something",
+      "decision": "Task: Build something\nOutcome: partial\nCritique: [Self-Critique] Task: Build something\nOutcome: partial\nTools used: Write, Edit\nSuccess rate: 1/2\n\nFailures:\n  - Edit: File not found\n\nRecommendations:\n  \u2022 When Edit fails, try Write as a fallback to o",
+      "reason": [
+        "self-improvement",
+        "partial"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:16:14Z"
+    },
+    {
+      "file_path": "Simple task",
+      "decision": "Task: Simple task\nOutcome: success\nCritique: [Self-Critique] Task: Simple task\nOutcome: success\nTools used: Bash\nSuccess rate: 1/1\n\n[OK] All tools succeeded on first try.\n\nRecommendations:\n  \u2022 Bash commands can be fragile \u2014 prefer native tools w",
+      "reason": [
+        "self-improvement",
+        "success"
+      ],
+      "author": "Draguniteus",
+      "timestamp": "2026-05-29T03:16:14Z"
     }
   ]
 }

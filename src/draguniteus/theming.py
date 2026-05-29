@@ -318,11 +318,11 @@ def _format_duration(seconds: float) -> str:
     return f"{seconds:.1f}s"
 
 def print_thinking(seconds: float, full_drama: bool = True) -> None:
-    """Print thinking completion indicator: ✻ [past-verb]ed for Xs (Claude Code style - orange)."""
+    """Print thinking completion indicator: ✻ [past-verb] for Xs (Claude Code style - orange)."""
     if full_drama:
         verb = _get_past_tense_verb()
         dur = _format_duration(seconds)
-        msg = f"✻ {verb}ed for {dur}"
+        msg = f"✻ {verb} for {dur}"
         try:
             # Orange for thinking verb
             sys.stdout.buffer.write(f"{ORANGE}{msg}{RESET}\n".encode('utf-8', errors='replace'))

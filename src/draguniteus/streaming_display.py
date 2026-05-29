@@ -100,6 +100,8 @@ class StreamingDisplay:
         tool_name: str | None = None,
         tool_args: str = "",
         tool_path: str = "",
+        thinking_active: bool = False,
+        thinking_done: bool = False,
     ) -> None:
         """Update thinking line on each streaming event.
 
@@ -110,6 +112,8 @@ class StreamingDisplay:
             tool_name: name of tool being called (if any)
             tool_args: args display string for the tool
             tool_path: file path for sub-item display
+            thinking_active: True while thinking content is being received
+            thinking_done: True once the thinking content block has ended
         """
         self._elapsed = time.time() - self._start_time
         self._thinking = thinking
@@ -118,12 +122,18 @@ class StreamingDisplay:
         self._tool_name = tool_name
         self._tool_args = tool_args
         self._tool_path = tool_path
+        self._thinking_active = thinking_active
+        self._thinking_done = thinking_done
 
         # Advance spinner
         if self.full_drama:
             self._spinner_index = (self._spinner_index + 1) % len(STAR_SPINNERS)
             self._spinner = STAR_SPINNERS[self._spinner_index]
-            self._thinking_verb = get_thinking_verb()
+            # Change verb when thinking block ends (now generating response)
+            if self._thinking_done and not self._thinking_active:
+                self._thinking_verb = "Generating"
+            else:
+                self._thinking_verb = get_thinking_verb()
 
         # Update thinking line via \r (in-place, works on Windows)
         if self.full_drama:
@@ -133,14 +143,20 @@ class StreamingDisplay:
         """Print thinking line via \r (in-place update on Windows)."""
         elapsed_str = self._format_elapsed(self._elapsed)
 
-        # Build intensity message based on elapsed time
+        # Build intensity message based on thinking state and elapsed time
         intensity = ""
-        if self._elapsed > 120:  # 2+ minutes
-            intensity = " · almost done thinking with max effort"
-        elif self._elapsed > 60:  # 1+ minute
-            intensity = " · thinking with max effort"
-        elif self._elapsed > 15:
-            intensity = " · thought for"
+        if self._thinking_active:
+            # Still receiving thinking content
+            if self._elapsed > 120:  # 2+ minutes
+                intensity = " · almost done thinking with max effort"
+            elif self._elapsed > 60:  # 1+ minute
+                intensity = " · thinking with max effort"
+            elif self._elapsed > 15:
+                intensity = " · thought for"
+        elif self._thinking_done:
+            # Thinking block ended - now generating response
+            if self._elapsed > 15:
+                intensity = " · almost done with max effort"
 
         # Token count display
         token_str = ""

@@ -562,7 +562,7 @@ def main(
         in_tok = 0
         out_tok = 0
 
-        for text, thinking, tool_calls, is_final in stream_one_turn(
+        for text, thinking, tool_calls, is_final, thinking_active, thinking_done, current_tokens in stream_one_turn(
             _client, messages, _get_system_prompt(messages), _cfg, _full_drama
         ):
             # Track accumulated thinking and response text
@@ -628,16 +628,14 @@ def main(
                 if search_patterns or files_reading:
                     display.set_search_context(search_patterns, files_reading)
 
-            try:
-                current_tokens = stream_one_turn._last_usage
-            except Exception:
-                pass
-
+            # current_tokens and thinking state now come from the stream tuple directly
             if display:
                 display.update(
                     thinking=thinking_text,
                     response=response_text,
                     tokens=current_tokens,
+                    thinking_active=thinking_active,
+                    thinking_done=thinking_done,
                 )
 
             if tool_calls is not None:
@@ -1097,7 +1095,7 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
     files_reading: list[str] = []
 
     # Stream with progressive display
-    for text, thinking, tool_calls, is_final in stream_one_turn(client, messages, _get_system_prompt(messages), cfg, _full_drama):
+    for text, thinking, tool_calls, is_final, thinking_active, thinking_done, current_tokens in stream_one_turn(client, messages, _get_system_prompt(messages), cfg, _full_drama):
         # Update accumulated values
         if thinking:
             thinking_text = thinking
@@ -1161,6 +1159,8 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                 thinking=thinking_text,
                 response=response_text,
                 tokens=current_tokens,
+                thinking_active=thinking_active,
+                thinking_done=thinking_done,
             )
 
         # Tool calls received (at is_final)

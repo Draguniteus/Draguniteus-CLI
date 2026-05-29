@@ -76,6 +76,9 @@ class StreamHandler:
         self._on_tool_call = on_tool_call  # Callback when tool call completes (content_block_stop)
         self._on_tool_start = on_tool_start  # Callback when tool starts (content_block_start)
         self._on_tool_use_start = on_tool_use_start  # Callback when tool_use block starts with partial args
+        self._current_block_type: str | None = None  # 'thinking', 'text', 'tool_use'
+        self._thinking_active: bool = False  # True when receiving thinking_delta events
+        self._thinking_block_ended: bool = False  # True when thinking content block has ended
 
     def _append_text(self, text: str) -> None:
         """Append text with size limit enforcement."""
@@ -114,6 +117,13 @@ class StreamHandler:
                         self._on_tool_use_start(tool_name, "")
                 elif btype == "thinking":
                     self._thinking_parts = []
+                    self._current_block_type = "thinking"
+                    self._thinking_active = True
+                    self._thinking_block_ended = False
+                elif btype == "text":
+                    self._current_block_type = "text"
+                elif btype == "tool_use":
+                    self._current_block_type = "tool_use"
 
         # Content block delta
         elif event_type == "content_block_delta":
@@ -131,10 +141,8 @@ class StreamHandler:
                 self._thinking_parts.append(thinking)
                 return None
             elif dtype == "signature_delta":
-                # MiniMax uses signature_delta for thinking content
-                sig = getattr(delta, "signature", "")
-                if sig:
-                    self._thinking_parts.append(sig)
+                # MiniMax uses signature_delta for thinking metadata/signature
+                # This is a cryptographic artifact - do NOT add to thinking content
                 return None
             elif dtype == "input_json_delta":
                 arg_text = getattr(delta, "partial_json", "")
@@ -147,6 +155,11 @@ class StreamHandler:
 
         # Content block stop
         elif event_type == "content_block_stop":
+            # If the thinking block just ended, mark it
+            if self._current_block_type == "thinking":
+                self._thinking_active = False
+                self._thinking_block_ended = True
+            self._current_block_type = None
             if self._current_tool:
                 tc = self._current_tool
                 self._current_tool = None
@@ -193,6 +206,26 @@ class StreamHandler:
         """Return (input_tokens, output_tokens)."""
         return self._input_tokens, self._output_tokens
 
+    def is_thinking_active(self) -> bool:
+        """True while thinking content is being received."""
+        return self._thinking_active
+
+    def is_thinking_done(self) -> bool:
+        """True once the thinking content block has ended."""
+        return self._thinking_block_ended
+
+    def get_estimated_output_tokens(self) -> int:
+        """Estimate output tokens from accumulated text + thinking parts.
+
+        Uses ~4 chars per token as an estimate. This provides a real-time
+        token count during streaming since the API only provides token
+        counts at message_stop.
+        """
+        text_chars = sum(len(p.encode('utf-8')) for p in self._text_parts)
+        thinking_chars = sum(len(p.encode('utf-8')) for p in self._thinking_parts)
+        total_chars = text_chars + thinking_chars
+        return max(1, total_chars // 4)
+
     def get_tool_calls(self) -> list[dict]:
         return self._tool_calls
 
@@ -206,14 +239,17 @@ def stream_one_turn(
     on_tool_call: callable = None,
     on_tool_start: callable = None,
     on_tool_use_start: callable = None,
-) -> Iterator[tuple[str, str, list[dict] | None, bool]]:
+) -> Iterator[tuple[str, str, list[dict] | None, bool, bool, bool, int]]:
     """Stream a single agent turn, yielding progressive results for Rich.Live display.
 
-    Yields tuples of (text, thinking, pending_tool_calls_or_None, is_final).
+    Yields tuples of (text, thinking, pending_tool_calls_or_None, is_final, thinking_active, thinking_done, estimated_tokens).
     - text: partial response text accumulated so far
     - thinking: partial thinking text accumulated so far
     - pending_tool_calls: list of completed tool calls when a tool is fully parsed (None otherwise)
     - is_final: True only when the streaming phase is done (all events drained)
+    - thinking_active: True while thinking content is being received
+    - thinking_done: True once the thinking content block has ended
+    - estimated_tokens: estimated output token count (real-time estimate during streaming)
 
     After is_final=True with tool_calls populated, the caller must execute tools
     and call back with results. This function does NOT execute tools — it only
@@ -286,20 +322,26 @@ def stream_one_turn(
         in_tok, out_tok = handler.get_usage()
         handler._input_tokens = in_tok
         handler._output_tokens = out_tok
+        estimated_tokens = handler.get_estimated_output_tokens()
         is_final = False
+        thinking_active = handler.is_thinking_active()
+        thinking_done = handler.is_thinking_done()
 
         # Yield progressively: text and thinking on every event so the caller
         # can display them in real-time. tool_calls remain None until is_final.
-        yield text, thinking, None, False
+        yield text, thinking, None, False, thinking_active, thinking_done, estimated_tokens
 
     # Final yield with tool calls and usage
     in_tok, out_tok = handler.get_usage()
     is_final = True
+    thinking_active = handler.is_thinking_active()
+    thinking_done = handler.is_thinking_done()
+    estimated_tokens = out_tok  # At final, use actual output tokens
     # Store on handler AND on function for backward compatibility
     handler._input_tokens = in_tok
     handler._output_tokens = out_tok
     stream_one_turn._last_usage = in_tok + out_tok
-    yield handler.get_text(), handler.get_thinking(), pending_tool_calls, True
+    yield handler.get_text(), handler.get_thinking(), pending_tool_calls, True, thinking_active, thinking_done, estimated_tokens
 
 
 def execute_tool_calls(

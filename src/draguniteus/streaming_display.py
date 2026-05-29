@@ -183,6 +183,9 @@ class StreamingDisplay:
                 for _ in range(total_lines):
                     clear_lines += "\r" + " " * min(self._last_thinking_len, 200) + "\r"
                 sys.stdout.buffer.write(clear_lines.encode('utf-8', errors='replace'))
+            else:
+                # First time: ensure we're on a new line before printing thinking status
+                sys.stdout.buffer.write("\n".encode('utf-8', errors='replace'))
 
             # Write new thinking line
             sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))

@@ -644,12 +644,14 @@ def main(
                 pending_tool_calls = tool_calls
 
             if is_final:
+                elapsed = time.time() - start
+
                 # Flush any remaining incomplete line
                 remaining = response_text[prev_response_len:]
                 if remaining and _full_drama:
                     try:
-                        sys.stdout.write(remaining)
-                        sys.stdout.flush()
+                        sys.stdout.buffer.write(remaining.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
                     except Exception:
                         pass
 
@@ -663,6 +665,35 @@ def main(
 
                 if display:
                     display.stop()
+
+                # Show thinking content in a collapsed block after streaming
+                # (only if substantial thinking content was accumulated)
+                thinking_len = len(thinking_text) if thinking_text else 0
+                if thinking_len > 50 and _full_drama:
+                    # Show thinking in a dim gray collapsible block
+                    try:
+                        dim = "\033[90m"
+                        reset = "\033[0m"
+                        cyan = "\033[36m"
+                        # Print thinking block header
+                        thinking_snippet = thinking_text[:500]
+                        if thinking_len > 500:
+                            thinking_snippet += "..."
+                        lines = thinking_snippet.split('\n')[:20]
+                        sys.stdout.buffer.write(f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                        for ln in lines:
+                            sys.stdout.buffer.write(f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
+                        if thinking_len > 500 or len(lines) > 20:
+                            sys.stdout.buffer.write(f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.write(f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
+                    except Exception:
+                        pass
+
+                # Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+                if _full_drama:
+                    from draguniteus.theming import print_thinking
+                    print_thinking(elapsed, _full_drama)
 
                 # Fire notification hooks
                 try:
@@ -694,23 +725,23 @@ def main(
                                 except Exception:
                                     for ln in result.split('\n')[:50]:
                                         try:
-                                            sys.stdout.write(f"  {ln}\n")
+                                            sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
                                         except UnicodeEncodeError:
-                                            sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                                            sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
                             else:
                                 try:
-                                    sys.stdout.write(f"\n{dim_color}⎿ {name}{reset}\n")
+                                    sys.stdout.buffer.write(f"\n{dim_color}⎿ {name}{reset}\n".encode('utf-8', errors='replace'))
                                 except UnicodeEncodeError:
-                                    sys.stdout.write(f"\n> {name}\n")
+                                    sys.stdout.buffer.write(f"\n> {name}\n".encode('utf-8', errors='replace'))
                                 lines = result.split('\n')
                                 for ln in lines[:50]:
                                     try:
-                                        sys.stdout.write(f"  {ln}\n")
+                                        sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
                                     except UnicodeEncodeError:
-                                        sys.stdout.write(f"  {ln.encode('ascii', errors='replace').decode()}\n")
+                                        sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
                                 if len(lines) > 50:
-                                    sys.stdout.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n")
-                        sys.stdout.flush()
+                                    sys.stdout.buffer.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
 
                 # Print response with ● prefix ONLY when not in dramatic mode
                 # (in dramatic mode, text was already streamed progressively above)
@@ -718,35 +749,11 @@ def main(
                     # In dramatic mode, streaming already printed the response.
                     # Just print a final newline to close any pending line.
                     try:
-                        sys.stdout.write("\n")
-                        sys.stdout.flush()
+                        sys.stdout.buffer.write("\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
                     except Exception:
                         pass
                 elif response_text and not _full_drama:
-                    text = response_text.lstrip('\n')
-                    try:
-                        sio = StringIO()
-                        c2 = Console(file=sio, force_terminal=False)
-                        c2.print(Markdown(text))
-                        rendered = sio.getvalue().rstrip('\n')
-                    except Exception:
-                        rendered = text
-                    import re
-                    clean_lines = []
-                    for line in rendered.split('\n'):
-                        clean = re.sub(r'\[/?[^]]+\]', '', line)
-                        clean = clean.strip()
-                        clean_lines.append(clean)
-                    first = True
-                    for line in clean_lines:
-                        if not line:
-                            continue
-                        prefix = "● " if first else "  "
-                        first = False
-                        try:
-                            print(prefix + line)
-                        except UnicodeEncodeError:
-                            print((prefix + line).encode('ascii', errors='replace').decode('ascii'))
                     text = response_text.lstrip('\n')
                     try:
                         sio = StringIO()

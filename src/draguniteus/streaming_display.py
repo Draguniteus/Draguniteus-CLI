@@ -133,6 +133,7 @@ class StreamingDisplay:
         self._tool_path = ""
         self._tool_args = ""
         self._header_printed = False
+        self._thinking_content_shown = False
 
     def update(
         self,
@@ -180,6 +181,11 @@ class StreamingDisplay:
         # Update thinking line via \r (in-place, works on Windows)
         if self.full_drama:
             self._thinking_print()
+
+        # Show thinking content when thinking block ends (only once)
+        if thinking_done and thinking and not self._thinking_content_shown:
+            self.show_thinking_content(thinking)
+            self._thinking_content_shown = True
 
     def _thinking_print(self) -> None:
         """Print thinking line that overwrites itself in-place.
@@ -244,6 +250,34 @@ class StreamingDisplay:
             sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
             self._last_thinking_len = len(line)
+        except Exception:
+            pass
+
+    def show_thinking_content(self, thinking: str) -> None:
+        """Show thinking content on its own lines when thinking block ends.
+
+        Called when thinking_done=True to display the accumulated thinking
+        content in a clean, non-intrusive way before response starts.
+        """
+        if not thinking or not self.full_drama:
+            return
+        try:
+            dim = DIM
+            reset = RESET
+            # Show first 3 lines of thinking content (or first 300 chars)
+            preview = thinking[:300]
+            if len(thinking) > 300:
+                preview = preview.rsplit('\n', 1)[0] + "\n  [...]"
+            else:
+                # Take first few lines
+                lines = preview.split('\n')
+                if len(lines) > 3:
+                    preview = "\n".join(lines[:3]) + "\n  [...]"
+
+            # Print thinking content with dim styling
+            thinking_display = f"\n  {dim}{preview}{reset}\n"
+            sys.stdout.buffer.write(thinking_display.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
         except Exception:
             pass
 

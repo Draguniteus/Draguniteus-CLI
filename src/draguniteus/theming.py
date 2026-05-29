@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from typing import Any
 
 from rich.console import Console
@@ -300,10 +301,28 @@ def print_welcome(
     except Exception as e:
         print("Draguniteus v0.1.0")
 
+# Past-tense verb mapping for completion indicator (Claude Code style)
+_PAST_TENSE_VERBS = ["Crunched", "Sautéed", "Examined", "Processed", "Analyzed", "Pondered"]
+
+def _get_past_tense_verb() -> str:
+    """Get a past-tense verb for completion indicator, consistent with elapsed time."""
+    idx = int(time.time() * 1000) % len(_PAST_TENSE_VERBS)
+    return _PAST_TENSE_VERBS[idx]
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds as Xm Ys or Y.Ys."""
+    if seconds >= 60:
+        mins = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{mins}m {secs}s"
+    return f"{seconds:.1f}s"
+
 def print_thinking(seconds: float, full_drama: bool = True) -> None:
-    """Print thinking indicator: ✻ Mulling for Xs (Claude Code style - orange)"""
+    """Print thinking completion indicator: ✻ [past-verb]ed for Xs (Claude Code style - orange)."""
     if full_drama:
-        msg = f"✻ {get_thinking_verb()}... ({seconds:.1f}s)"
+        verb = _get_past_tense_verb()
+        dur = _format_duration(seconds)
+        msg = f"✻ {verb}ed for {dur}"
         try:
             # Orange for thinking verb
             sys.stdout.buffer.write(f"{ORANGE}{msg}{RESET}\n".encode('utf-8', errors='replace'))

@@ -634,7 +634,7 @@ def run_one_turn(
             pass
 
     stream = client.stream(
-        messages=api_messages,
+        messages=messages,
         tools=tools,
         system=system,
         betas=betas,

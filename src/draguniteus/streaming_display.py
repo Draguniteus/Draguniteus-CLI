@@ -16,6 +16,7 @@ After streaming completes, the live display stops cleanly.
 from __future__ import annotations
 
 import itertools
+import os
 import sys
 import time
 from typing import Any
@@ -193,31 +194,31 @@ class StreamingDisplay:
             if self._tool_path:
                 total_lines += 1
 
-            # Overwrite old content: go to start, write spaces for all lines, go back
             if self._last_thinking_len > 0:
-                clear_lines = ""
-                for _ in range(total_lines):
-                    clear_lines += "\r" + " " * min(self._last_thinking_len, 200) + "\r"
-                sys.stdout.buffer.write(clear_lines.encode('utf-8', errors='replace'))
+                # Subsequent update: move cursor UP to the thinking line using ANSI
+                # Then \r to start of that line, spaces to clear
+                move_up = "\x1b[{}A".format(total_lines)
+                clear_lines = move_up + "\r" + " " * min(self._last_thinking_len, 200)
+                os.write(1, clear_lines.encode('utf-8', errors='replace'))
             else:
-                # First time: ensure we're on a new line before printing thinking status
-                sys.stdout.buffer.write("\n".encode('utf-8', errors='replace'))
+                # First time: move to a new line before printing thinking status
+                os.write(1, "\n".encode('utf-8', errors='replace'))
 
-            # Write new thinking line
-            sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
+            # Write new thinking line (ending with \n to move cursor to next line)
+            os.write(1,(line + "\n").encode('utf-8', errors='replace'))
 
             # Write search context on next line if active
             if search_context:
                 search_line = f"\n  {search_context}"
-                sys.stdout.buffer.write(search_line.encode('utf-8', errors='replace'))
+                os.write(1,search_line.encode('utf-8', errors='replace'))
 
             # Write file context on next line if active
             if self._tool_path:
                 file_context = f"\n  ⎿  {self._tool_path}"
-                sys.stdout.buffer.write(file_context.encode('utf-8', errors='replace'))
+                os.write(1,file_context.encode('utf-8', errors='replace'))
 
             sys.stdout.buffer.flush()
-            self._last_thinking_len = max(len(line), len(search_context) + 20 if search_context else 0)
+            self._last_thinking_len = len(line) + 1  # +1 for the \n
         except Exception:
             pass
 
@@ -231,7 +232,7 @@ class StreamingDisplay:
         else:
             line = f"\r{spinner} {self._thinking_verb}... ({elapsed_str})"
         try:
-            sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
+            os.write(1,line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
             self._last_thinking_len = len(line)
         except Exception:
@@ -248,7 +249,7 @@ class StreamingDisplay:
             bullet = f"\n  \033[34m●\033[0m \033[36m{tool_name}\033[0m({args_display})\033[90m…\033[0m"
             path_display = f"\n    \033[36m⎿\033[0m  {path}\033[90m\033[0m" if path else ""
             display = bullet + path_display
-            sys.stdout.buffer.write(display.encode('utf-8', errors='replace'))
+            os.write(1,display.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
         except Exception:
             pass
@@ -275,14 +276,14 @@ class StreamingDisplay:
             reset = RESET
             cyan = CYAN
             header = f"\n  {cyan}--- {title} ({total} line{'s' if total != 1 else ''}) ---{reset}\n"
-            sys.stdout.buffer.write(header.encode('utf-8', errors='replace'))
+            os.write(1,header.encode('utf-8', errors='replace'))
 
             # Colorize based on output characteristics
             for i, line in enumerate(display_lines):
                 line = line.rstrip("\r")
                 if not line:
                     # Empty line — preserve spacing
-                    sys.stdout.buffer.write(f"  \n".encode('utf-8', errors='replace'))
+                    os.write(1,f"  \n".encode('utf-8', errors='replace'))
                     continue
 
                 # Detect line type for coloring
@@ -302,10 +303,10 @@ class StreamingDisplay:
                     color = WHITE
 
                 try:
-                    sys.stdout.buffer.write(f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
+                    os.write(1,f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
                 except Exception:
                     # Fallback for non-colorable content
-                    sys.stdout.buffer.write(f"  {line}\n".encode('utf-8', errors='replace'))
+                    os.write(1,f"  {line}\n".encode('utf-8', errors='replace'))
 
                 # Flush every 50 lines for streaming effect on large outputs
                 if i > 0 and i % 50 == 0:
@@ -313,17 +314,17 @@ class StreamingDisplay:
 
             if truncated:
                 footer = f"  {DIM}... ({total - max_lines} more lines) ...{reset}\n"
-                sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
+                os.write(1,footer.encode('utf-8', errors='replace'))
 
             footer = f"  {cyan}--- end ---{reset}\n"
-            sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
+            os.write(1,footer.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
 
         except Exception:
             # Fallback: print raw output
             try:
                 for line in display_lines[:20]:
-                    sys.stdout.buffer.write(f"{line}\n".encode('utf-8', errors='replace'))
+                    os.write(1,f"{line}\n".encode('utf-8', errors='replace'))
                 sys.stdout.buffer.flush()
             except Exception:
                 pass
@@ -361,7 +362,7 @@ class StreamingDisplay:
         if self._showing_thinking:
             try:
                 clear = "\r" + " " * self._last_thinking_len + "\r"
-                sys.stdout.buffer.write(clear.encode('utf-8', errors='replace'))
+                os.write(1,clear.encode('utf-8', errors='replace'))
                 sys.stdout.buffer.flush()
             except Exception:
                 pass

@@ -575,22 +575,13 @@ def main(
                 if response_text and display:
                     new_text = response_text[prev_response_len:]
                     if new_text and _full_drama:
-                        # Print new text chunks — only complete lines to avoid mid-word splits
-                        remaining = new_text
-                        while remaining:
-                            nl_idx = remaining.find('\n')
-                            if nl_idx >= 0:
-                                chunk = remaining[:nl_idx + 1]
-                                remaining = remaining[nl_idx + 1:]
-                            else:
-                                # Hold incomplete line — will print on next iteration or at end
-                                break
+                        # Print new text characters immediately (no buffering/holding for lines)
+                        for ch in new_text:
                             try:
-                                sys.stdout.buffer.write(chunk.encode('utf-8', errors='replace'))
-                                sys.stdout.buffer.flush()
+                                os.write(1, ch.encode('utf-8', errors='replace'))
                             except Exception:
                                 pass
-                        prev_response_len = len(response_text) - len(remaining)
+                        prev_response_len = len(response_text)
 
             # Track search context
             if tool_calls and display:
@@ -648,8 +639,8 @@ def main(
                 remaining = response_text[prev_response_len:]
                 if remaining and _full_drama:
                     try:
-                        sys.stdout.buffer.write(remaining.encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()
+                        os.write(1, remaining.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
                     except Exception:
                         pass
 
@@ -678,13 +669,13 @@ def main(
                         if thinking_len > 500:
                             thinking_snippet += "..."
                         lines = thinking_snippet.split('\n')[:20]
-                        sys.stdout.buffer.write(f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                        os.write(1, f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
                         for ln in lines:
-                            sys.stdout.buffer.write(f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
+                            os.write(1, f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
                         if thinking_len > 500 or len(lines) > 20:
-                            sys.stdout.buffer.write(f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.write(f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()
+                            os.write(1, f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
+                        os.write(1, f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
                     except Exception:
                         pass
 
@@ -723,23 +714,23 @@ def main(
                                 except Exception:
                                     for ln in result.split('\n')[:50]:
                                         try:
-                                            sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
+                                            os.write(1, f"  {ln}\n".encode('utf-8', errors='replace'))
                                         except UnicodeEncodeError:
-                                            sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
+                                            os.write(1, f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
                             else:
                                 try:
-                                    sys.stdout.buffer.write(f"\n{dim_color}⎿ {name}{reset}\n".encode('utf-8', errors='replace'))
+                                    os.write(1, f"\n{dim_color}⎿ {name}{reset}\n".encode('utf-8', errors='replace'))
                                 except UnicodeEncodeError:
-                                    sys.stdout.buffer.write(f"\n> {name}\n".encode('utf-8', errors='replace'))
+                                    os.write(1, f"\n> {name}\n".encode('utf-8', errors='replace'))
                                 lines = result.split('\n')
                                 for ln in lines[:50]:
                                     try:
-                                        sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
+                                        os.write(1, f"  {ln}\n".encode('utf-8', errors='replace'))
                                     except UnicodeEncodeError:
-                                        sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
+                                        os.write(1, f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
                                 if len(lines) > 50:
-                                    sys.stdout.buffer.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()
+                                    os.write(1, f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
 
                 # Print response with ● prefix ONLY when not in dramatic mode
                 # (in dramatic mode, text was already streamed progressively above)
@@ -747,8 +738,8 @@ def main(
                     # In dramatic mode, streaming already printed the response.
                     # Just print a final newline to close any pending line.
                     try:
-                        sys.stdout.buffer.write("\n".encode('utf-8', errors='replace'))
-                        sys.stdout.buffer.flush()
+                        os.write(1, "\n".encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
                     except Exception:
                         pass
                 elif response_text and not _full_drama:
@@ -781,7 +772,7 @@ def main(
         _active_bg_task = None
 
         # --- Self-improvement critique ---
-        if tool_results and getattr(cfg, 'self_improvement_enabled', True):
+        if tool_results and getattr(_cfg, 'self_improvement_enabled', True):
             try:
                 from draguniteus.self_improvement import get_self_improvement_engine
                 engine = get_self_improvement_engine()
@@ -1194,13 +1185,13 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
                     if thinking_len > 500:
                         thinking_snippet += "..."
                     lines = thinking_snippet.split('\n')[:20]
-                    sys.stdout.buffer.write(f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                    os.write(1, f"\n{dim}┌─ Thinking ──────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
                     for ln in lines:
-                        sys.stdout.buffer.write(f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
+                        os.write(1, f"{dim}│ {ln}{reset}\n".encode('utf-8', errors='replace'))
                     if thinking_len > 500 or len(lines) > 20:
-                        sys.stdout.buffer.write(f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
-                    sys.stdout.buffer.write(f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
-                    sys.stdout.buffer.flush()
+                        os.write(1, f"{dim}│ ... ({thinking_len - 500} more chars){reset}\n".encode('utf-8', errors='replace'))
+                    os.write(1, f"{dim}└──────────────────────────────────────────────────────────────────{reset}\n".encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.flush()  # noqa: os.write is unbuffered but we keep flush for safety
                 except Exception:
                     pass
 

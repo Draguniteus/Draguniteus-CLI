@@ -680,23 +680,39 @@ def main(
                     except Exception:
                         pass
 
+                # Step 1.5: Print timestamp header like Claude Code: "09:27 PM MiniMax-M2.7"
+                if _full_drama:
+                    from draguniteus.theming import CYAN, RESET
+                    ts = time.strftime("%I:%M %p")
+                    model_name = str(_cfg.model) if _cfg.model else "MiniMax-M2.7"
+                    try:
+                        header = f"{CYAN}{ts} {model_name}{RESET}\n"
+                        sys.stdout.buffer.write(header.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
+                    except Exception:
+                        pass
+
                 # Step 2: Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
                 if _full_drama:
                     from draguniteus.theming import print_thinking
                     print_thinking(elapsed, _full_drama)
 
-                # Step 3: Show thinking content (after thinking line is cleared)
-                if thinking_text and display:
-                    display.show_thinking_content(thinking_text)
-
-                # Step 4: Stream response text character-by-character on the fresh line
+                # Step 3: THINKING CONTENT HIDDEN - Claude Code style (only shows thinking time, not content)
+                # Step 4: Stream response text with proper markdown rendering
                 if _full_drama and response_text:
-                    for ch in response_text:
-                        try:
-                            sys.stdout.buffer.write(ch.encode('utf-8', errors='replace'))
-                        except Exception:
-                            pass
-                    sys.stdout.buffer.flush()
+                    # Use Rich to render markdown properly (bold, italic, code blocks, etc.)
+                    try:
+                        sio = io.StringIO()
+                        c2 = Console(file=sio, force_terminal=False)
+                        c2.print(Markdown(response_text))
+                        rendered = sio.getvalue()
+                        # Write the rendered markdown to stdout
+                        sys.stdout.buffer.write(rendered.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
+                    except Exception:
+                        # Fallback: write raw response if markdown fails
+                        sys.stdout.buffer.write(response_text.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
 
                 # Tool execution now happens inside stream_one_turn (in parallel during streaming)
                 # At is_final=True, tool_calls is the executed tool_results
@@ -704,9 +720,17 @@ def main(
                 if tool_calls and _full_drama:
                     dim_color = "\033[90m"
                     reset = "\033[0m"
+                    # Regex for stripping HTML tags
+                    import re
+                    html_stripper = re.compile(r'<[^>]+>')
                     for tr in tool_calls:  # tool_calls here is actually tool_results (executed)
                         name = tr.get("tool", "?")
                         result = str(tr.get("result", ""))
+                        # Clean HTML from results (Claude Code shows clean output, not raw HTML)
+                        if name in ("WebSearch", "mcp__web__search") or result.strip().startswith('<') and '</' in result:
+                            result = html_stripper.sub('', result)
+                            result = result.replace('&nbsp;', ' ').replace('&', '&').replace('<', '<').replace('>', '>')
+                            result = result.strip()
                         if name == "Bash" and len(result) > 2048:
                             try:
                                 display.show_output(result, title=f"{name} output")
@@ -825,6 +849,17 @@ def main(
                 summary = f"Called {summary}"
             _print(gray(summary))
 
+        # Print Claude Code-style recap: "∴ Thinking… analysis" and "※ recap: summary"
+        if _full_drama and user_input:
+            try:
+                from draguniteus.theming import DIM, RESET, YELLOW
+                user_preview = user_input[:100].replace('\n', ' ')
+                recap = f"{DIM}※ recap:{RESET} {user_preview}"
+                sys.stdout.buffer.write(f"\n{recap}\n".encode('utf-8', errors='replace'))
+                sys.stdout.buffer.flush()
+            except Exception:
+                pass
+
         # Print status line
         try:
             import subprocess
@@ -872,9 +907,12 @@ def main(
         except Exception:
             pass
 
-        # Show bottom bar if there are pending edits (Claude Code style)
-        if _pending_edits and _full_drama:
-            print_bottom_bar(has_edits=True, edit_count=len(_pending_edits))
+        # Show bottom bar in Claude Code style (always show ctrl+o/ctrl+e controls)
+        if _full_drama:
+            if _pending_edits:
+                print_bottom_bar(has_edits=True, edit_count=len(_pending_edits))
+            else:
+                print_bottom_bar(has_edits=False)
 
         print_divider(_full_drama)
         print_shortcuts_line()

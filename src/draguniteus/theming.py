@@ -493,18 +493,16 @@ def print_recap(text: str) -> None:
 
 
 def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
-    """Print Claude Code-style bottom bar with accept edits controls.
+    """Print Claude Code-style bottom bar with toggle controls.
 
-    Format: ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt
-    - "accept edits on" is light purple (Claude brand)
-    - "shift+tab to cycle" and "esc to interrupt" are dim gray
-    Or when no pending edits: (ctrl+e to expand results) - all dim gray
+    Format: (ctrl+o to toggle · ctrl+e to show all) - all dim gray
+    Or when there are pending edits: (shift+tab to cycle) · esc to interrupt
     """
     if has_edits and edit_count > 0:
         # Purple for "accept edits on", dim for rest
         bar = f"  {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}{DIM} (shift+tab to cycle) · esc to interrupt{RESET}"
     else:
-        bar = f"{DIM}  (ctrl+e to expand results · esc to interrupt){RESET}"
+        bar = f"{DIM}  (ctrl+o to toggle · ctrl+e to show all){RESET}"
     try:
         sys.stdout.buffer.write(f"{bar}\n".encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()

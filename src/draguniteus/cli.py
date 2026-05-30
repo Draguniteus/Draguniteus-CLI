@@ -1386,7 +1386,7 @@ def _read_input() -> str:
     Uses PromptToolkitInput for rich slash command menu with fuzzy matching
     and arrow key navigation when prompt_toolkit is available.
     """
-    global _vim_mode, _prompt_suggestions
+    global _vim_mode, _prompt_suggestions, _last_tool_results, _permission_mode
 
     # Try PromptToolkitInput first for rich slash menu
     try:
@@ -1400,10 +1400,132 @@ def _read_input() -> str:
         def on_ctrl_t():
             global _show_task_list
             _show_task_list = not _show_task_list
+            # Show task list feedback
+            if _show_task_list:
+                try:
+                    from draguniteus.tasks.manager import get_task_manager
+                    tm = get_task_manager()
+                    tasks = tm.list_tasks()
+                    print("\n  [Tasks]", flush=True)
+                    if tasks:
+                        for t in tasks[:5]:
+                            status = "[ ]" if getattr(t, "status", "?") == "pending" else "[~]" if getattr(t, "status", "?") == "in_progress" else "[x]"
+                            subj = getattr(t, "subject", "?")
+                            print(f"  {status} {subj}", flush=True)
+                    else:
+                        print("  (no tasks)", flush=True)
+                except Exception:
+                    pass
+
+        def on_ctrl_o():
+            """Expand tool results - Ctrl+O"""
+            global _last_tool_results
+            if _last_tool_results:
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                print("=" * 68, flush=True)
+                i = 0
+                for tr in _last_tool_results:
+                    i += 1
+                    name = tr.get("tool", "?")
+                    result = str(tr.get("result", ""))
+                    print(f"  [{i}/{len(_last_tool_results)}] {name}", flush=True)
+                    lines = result.split('\n')
+                    for ln in lines[:100]:
+                        print(f"    {ln}", flush=True)
+                    if len(lines) > 100:
+                        print(f"    [...+ {len(lines) - 100} lines]", flush=True)
+                print("=" * 68, flush=True)
+            else:
+                print("\r  (no tool results to expand)", end="", flush=True)
+
+        def on_ctrl_b():
+            """Background active task - Ctrl+B"""
+            global _active_bg_task
+            if _active_bg_task:
+                task_id = _active_bg_task.get("id", "?")
+                task_desc = _active_bg_task.get("description", "?")[:60]
+                task_type = _active_bg_task.get("type", "shell")
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                if task_type == "agent":
+                    print(f"  Agent is thinking: {task_desc}", flush=True)
+                    print(f"  (Agent turns cannot be backgrounded — wait for completion)", flush=True)
+                else:
+                    print(f"  Backgrounding: {task_desc}", flush=True)
+                    print(f"  [Task ID: {task_id}] Use /background to view", flush=True)
+                    try:
+                        from draguniteus.tasks.manager import get_task_manager
+                        tm = get_task_manager()
+                        task = tm.get_task(task_id)
+                        if task:
+                            task.status = "pending"
+                    except Exception:
+                        pass
+                _active_bg_task = None
+            else:
+                print("\r  (no active task to background)", end="", flush=True)
+
+        def on_ctrl_l():
+            """Clear screen / redraw - Ctrl+L"""
+            print("\x1b[2J\x1b[H", end="", flush=True)
+
+        def on_ctrl_e():
+            """Expand tool results - Ctrl+E (same as Ctrl+O)"""
+            global _last_tool_results
+            if _last_tool_results:
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                print("=" * 68, flush=True)
+                i = 0
+                for tr in _last_tool_results:
+                    i += 1
+                    name = tr.get("tool", "?")
+                    result = str(tr.get("result", ""))
+                    # Use colorized streaming for large Bash outputs
+                    if name == "Bash" and len(result) > 2048:
+                        print(f"  [{i}/{len(_last_tool_results)}] {name} output", flush=True)
+                        try:
+                            from draguniteus.streaming_display import StreamingDisplay
+                            disp = StreamingDisplay(console, _full_drama)
+                            disp.show_output(result, title=f"{name} output")
+                        except Exception:
+                            for ln in result.split('\n')[:100]:
+                                print(f"    {ln}", flush=True)
+                            if len(result.split('\n')) > 100:
+                                print(f"    [...+ {len(result.split(chr(10))) - 100} lines]", flush=True)
+                    else:
+                        print(f"  [{i}/{len(_last_tool_results)}] {name}", flush=True)
+                        lines = result.split('\n')
+                        for ln in lines[:100]:
+                            print(f"    {ln}", flush=True)
+                        if len(lines) > 100:
+                            print(f"    [...+ {len(lines) - 100} lines]", flush=True)
+                print("=" * 68, flush=True)
+            else:
+                print("\r  (no tool results to expand)", end="", flush=True)
+
+        def on_rewind():
+            """Rewind conversation - Esc Esc"""
+            print("\r  (rewind feature - use /rewind command)", end="", flush=True)
+
+        def on_tab_cycle():
+            """Cycle permission mode - Shift+Tab"""
+            global _permission_mode
+            modes = ["default", "acceptEdits", "plan", "auto"]
+            try:
+                idx = (modes.index(_permission_mode) + 1) % len(modes)
+            except (ValueError, AttributeError):
+                idx = 0
+            _permission_mode = modes[idx]
+            print(f"\r  Permission: {_permission_mode}", end="", flush=True)
 
         pt_input = PromptToolkitInput(
             on_ctrl_r=on_ctrl_r,
             on_ctrl_t=on_ctrl_t,
+            on_ctrl_o=on_ctrl_o,
+            on_ctrl_b=on_ctrl_b,
+            on_ctrl_l=on_ctrl_l,
+            on_ctrl_e=on_ctrl_e,
+            on_tab_cycle=on_tab_cycle,
+            on_rewind=on_rewind,
         )
         result = pt_input.read_line("❯ ")
         if result:

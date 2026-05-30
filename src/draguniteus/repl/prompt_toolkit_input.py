@@ -120,6 +120,8 @@ class SlashCommandCompleter(Completer):
 class VimKeys:
     """Vim keybindings for prompt_toolkit."""
 
+    _vim_state: dict = {"escape_count": 0, "escape_timer": None}
+
     @staticmethod
     def get_key_bindings(
         on_interrupt: Callable[[], None] | None = None,
@@ -130,9 +132,12 @@ class VimKeys:
         on_ctrl_b: Callable[[], None] | None = None,
         on_ctrl_o: Callable[[], None] | None = None,
         on_ctrl_l: Callable[[], None] | None = None,
+        on_ctrl_e: Callable[[], None] | None = None,
+        on_rewind: Callable[[], None] | None = None,
     ) -> "KeyBindings":
         """Build vim key bindings."""
         kb = KeyBindings()
+        vim_state = VimKeys._vim_state
 
         @kb.add(Keys.ControlC)
         def handle_ctrl_c(event):
@@ -162,7 +167,7 @@ class VimKeys:
 
         @kb.add('g', filter=has_focus)
         def handle_g(event):
-            self._vim_state["g_pressed"] = True
+            vim_state["g_pressed"] = True
             # Don't move cursor - let vim mode handle it
 
         @kb.add('G', filter=has_focus)
@@ -188,6 +193,19 @@ class VimKeys:
 
         @kb.add(Keys.Escape)
         def handle_escape(event):
+            # Handle Esc Esc for rewind (Claude Code feature)
+            import time
+            current_time = time.time()
+            last_escape = vim_state.get("last_escape_time", 0)
+            if current_time - last_escape < 0.5:
+                # Double escape detected - trigger rewind
+                vim_state["escape_count"] = 0
+                vim_state["last_escape_time"] = 0
+                if on_rewind:
+                    on_rewind()
+                    return
+            vim_state["escape_count"] = 1
+            vim_state["last_escape_time"] = current_time
             if navigation_callback:
                 navigation_callback('escape')
 
@@ -218,6 +236,11 @@ class VimKeys:
             if on_ctrl_l:
                 on_ctrl_l()
 
+        @kb.add(Keys.ControlE)
+        def handle_ctrl_e(event):
+            if on_ctrl_e:
+                on_ctrl_e()
+
         @kb.add(Keys.Enter, filter=has_focus)
         def handle_enter(event):
             event.current_buffer.validate_and_accept()
@@ -240,6 +263,8 @@ class PromptToolkitInput:
         on_ctrl_b: Callable[[], None] | None = None,
         on_ctrl_o: Callable[[], None] | None = None,
         on_ctrl_l: Callable[[], None] | None = None,
+        on_ctrl_e: Callable[[], None] | None = None,
+        on_rewind: Callable[[], None] | None = None,
         completions: list[str] | None = None,
     ):
         """Initialize the input handler."""
@@ -250,6 +275,8 @@ class PromptToolkitInput:
         self._on_ctrl_b = on_ctrl_b
         self._on_ctrl_o = on_ctrl_o
         self._on_ctrl_l = on_ctrl_l
+        self._on_ctrl_e = on_ctrl_e
+        self._on_rewind = on_rewind
         self._completions = completions or []
         self._vim_state = {"g_pressed": False}
         self._session: "PromptSession | None" = None
@@ -284,6 +311,8 @@ class PromptToolkitInput:
             on_ctrl_b=self._on_ctrl_b,
             on_ctrl_o=self._on_ctrl_o,
             on_ctrl_l=self._on_ctrl_l,
+            on_ctrl_e=self._on_ctrl_e,
+            on_rewind=self._on_rewind,
         )
 
         style = Style.from_dict({

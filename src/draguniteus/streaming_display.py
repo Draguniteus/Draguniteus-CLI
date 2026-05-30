@@ -225,6 +225,8 @@ class StreamingDisplay:
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
         line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
+        # CRITICAL: Print thinking line immediately on first call (even before first event)
+        # Otherwise nothing appears until streaming events arrive
         try:
             # Check if we should use ANSI escape codes or fallback
             # On Windows conhost, ANSI codes may not work, so we use a simpler approach
@@ -236,9 +238,9 @@ class StreamingDisplay:
                     sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
                     sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
                     sys.stdout.buffer.flush()
+                    sys.stdout.flush()  # Force flush all buffers
                 except Exception:
-                    # Fallback: just print on a new line (no overwrite, but visible)
-                    # Use \r to move to column 0 first, then print
+                    # Fallback: print with \r to move to column 0, then flush
                     print(f"\r{line}", end="", flush=True)
             else:
                 # Unix/Linux/macOS - use ANSI escape codes
@@ -246,6 +248,7 @@ class StreamingDisplay:
                 sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
                 sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
                 sys.stdout.buffer.flush()
+                sys.stdout.flush()  # Force flush all buffers
 
             self._last_thinking_len = len(line)
             self._showing_thinking = True

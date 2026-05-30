@@ -723,14 +723,33 @@ def main(
                     # Regex for stripping HTML tags
                     import re
                     html_stripper = re.compile(r'<[^>]+>')
+                    # Challenge form detection (shows DuckDuckGo is blocking us)
+                    challenge_pattern = re.compile(r'id="challenge-form"|name="q" value="[^"]*" action="//duckduckgo\.com', re.IGNORECASE)
                     for tr in tool_calls:  # tool_calls here is actually tool_results (executed)
                         name = tr.get("tool", "?")
                         result = str(tr.get("result", ""))
                         # Clean HTML from results (Claude Code shows clean output, not raw HTML)
-                        if name in ("WebSearch", "mcp__web__search") or result.strip().startswith('<') and '</' in result:
-                            result = html_stripper.sub('', result)
-                            result = result.replace('&nbsp;', ' ').replace('&', '&').replace('<', '<').replace('>', '>')
-                            result = result.strip()
+                        # Trigger if: starts with < OR contains challenge-form (DuckDuckGo blocking)
+                        if name in ("WebSearch", "mcp__web__search") or 'challenge-form' in result or (result.strip().startswith('<') and '</' in result):
+                            # Check if it's a DuckDuckGo challenge page
+                            if 'duckduckgo' in result.lower() or 'challenge-form' in result:
+                                # DuckDuckGo is blocking - extract what we can or show error
+                                clean_lines = []
+                                for line in result.split('\n'):
+                                    # Keep lines with actual content (not HTML tags or form elements)
+                                    if line.strip() and not line.strip().startswith('<') and 'action=' not in line:
+                                        clean = html_stripper.sub('', line).strip()
+                                        if clean and len(clean) > 3:
+                                            clean_lines.append(clean)
+                                if clean_lines:
+                                    result = "[WebSearch blocked by DuckDuckGo - partial results]\n\n" + "\n".join(clean_lines[:20])
+                                else:
+                                    result = "[WebSearch unavailable] DuckDuckGo is blocking requests. Set TAVILY_API_KEY or SERP_API_KEY for web search."
+                            else:
+                                # Normal HTML stripping for other sources
+                                result = html_stripper.sub('', result)
+                                result = result.replace('&nbsp;', ' ').replace('&', '&')
+                                result = result.strip()
                         if name == "Bash" and len(result) > 2048:
                             try:
                                 display.show_output(result, title=f"{name} output")

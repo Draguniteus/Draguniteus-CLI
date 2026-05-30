@@ -102,31 +102,107 @@ def tool_websearch(query: str) -> str:
         except Exception:
             pass  # Fall back to DuckDuckGo
 
-    # Fallback to DuckDuckGo HTML
+    # Fallback to DuckDuckGo Lite (simpler, less blocking)
     try:
         import urllib.parse
 
-        search_url = f"https://duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-        resp = requests.get(search_url, timeout=30, headers={
-            "User-Agent": "Mozilla/5.0 Draguniteus/0.1.0"
-        })
-        resp.raise_for_status()
+        # Try DuckDuckGo Lite first (simpler HTML, less likely to block)
+        for search_url in [
+            f"https://lite.duckduckgo.com/lite/?q={urllib.parse.quote(query)}",
+            f"https://duckduckgo.com/html/?q={urllib.parse.quote(query)}",
+        ]:
+            try:
+                resp = requests.get(search_url, timeout=30, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                resp.raise_for_status()
 
-        # Parse results from HTML
-        results = []
-        import re
-        # Match search result titles and URLs
-        pattern = r'<a class="result__a" href="([^"]+)"[^>]*>([^<]+)</a>'
-        matches = re.findall(pattern, resp.text)
+                # Parse results from HTML
+                results = []
+                import re
 
-        for url, title in matches[:10]:
-            results.append(f"- {title}\n  {url}")
+                # For DuckDuckGo Lite
+                pattern = r'<a class="result__a" href="([^"]+)"[^>]*>([^<]+)</a>'
+                matches = re.findall(pattern, resp.text)
 
-        if results:
-            return "[Web Search Results]\n\n" + "\n".join(results)
-        else:
-            # Fallback: return snippet of HTML
-            return f"[Search results for '{query}']\n\n{resp.text[:3000]}"
+                for url, title in matches[:10]:
+                    results.append(f"- {title}\n  {url}")
+
+                if results:
+                    return "[Web Search Results]\n\n" + "\n".join(results)
+
+                # If no results, try alternative pattern for Lite
+                if not results:
+                    pattern = r'<a href="(https?://[^"]+)"[^>]*>\s*([^<]+)\s*</a>'
+                    matches = re.findall(pattern, resp.text)
+                    for url, title in matches[:10]:
+                        if title.strip() and url.startswith('http'):
+                            results.append(f"- {title.strip()}\n  {url}")
+
+                if results:
+                    return "[Web Search Results]\n\n" + "\n".join(results)
+
+            except Exception:
+                continue
+
+        # If we got here, both DuckDuckGo attempts failed - use fallback
+        return tool_websearch_fallback(query)
 
     except Exception as e:
         return f"WebSearch error: {e}"
+
+
+def tool_websearch_fallback(query: str) -> str:
+    """Fallback search using free SerpAPI-like endpoint or message.
+
+    This is called when both Tavily and DuckDuckGo fail.
+    """
+    # Check for SerpAPI key
+    serp_key = os.environ.get("SERP_API_KEY")
+    if serp_key:
+        try:
+            import urllib.parse
+            import json as json_module
+            url = f"https://serpapi.com/search.json?q={urllib.parse.quote(query)}&api_key={serp_key}"
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("organic_results", [])
+                if results:
+                    lines = ["[Web Search Results (SerpAPI)]"]
+                    for r in results[:10]:
+                        title = r.get("title", "No title")
+                        link = r.get("link", "")
+                        snippet = r.get("snippet", "")[:200]
+                        lines.append(f"- {title}\n  {link}\n  {snippet}")
+                    return "\n".join(lines)
+        except Exception:
+            pass
+
+    # Check for Brave Search API key
+    brave_key = os.environ.get("BRAVE_SEARCH_API_KEY")
+    if brave_key:
+        try:
+            import urllib.parse
+            import json as json_module
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://api.search.brave.com/res/v1/search?q={encoded_query}&count=10"
+            resp = requests.get(url, timeout=30, headers={
+                "Accept": "application/json",
+                "X-Subscription-Token": brave_key
+            })
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("web", {}).get("results", [])
+                if results:
+                    lines = ["[Web Search Results (Brave)]"]
+                    for r in results[:10]:
+                        title = r.get("title", "No title")
+                        url = r.get("url", "")
+                        snippet = r.get("description", "")[:200]
+                        lines.append(f"- {title}\n  {url}\n  {snippet}")
+                    return "\n".join(lines)
+        except Exception:
+            pass
+
+    return "[WebSearch unavailable] Both Tavily and DuckDuckGo are blocked. Set TAVILY_API_KEY or SERP_API_KEY environment variable for web search."

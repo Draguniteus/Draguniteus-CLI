@@ -89,11 +89,17 @@ def tool_websearch(query: str) -> str:
         try:
             import urllib.parse
             import json as json_module
-            encoded_query = urllib.parse.quote(query)
-            url = f"https://api.tavily.com/search?api_key={tavily_key}&query={encoded_query}&max_results=10"
-            resp = requests.get(url, timeout=30, headers={
-                "User-Agent": "Draguniteus/0.1.0"
-            })
+            # Tavily API uses POST with JSON body, not GET with query params
+            payload = json_module.dumps({"api_key": tavily_key, "query": query, "max_results": 10})
+            resp = requests.post(
+                "https://api.tavily.com/search",
+                data=payload,
+                timeout=30,
+                headers={
+                    "User-Agent": "Draguniteus/0.1.0",
+                    "Content-Type": "application/json"
+                }
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 results = data.get("results", [])

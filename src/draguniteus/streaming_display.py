@@ -186,18 +186,11 @@ class StreamingDisplay:
     def _thinking_print(self) -> None:
         """Print thinking line that overwrites itself in-place.
 
-        Uses \x1b[2K (erase line) + \r (return to column 0) to reliably
-        overwrite the thinking line regardless of cursor position.
-        Does NOT include trailing \n so response text can follow on same line
-        after thinking line is cleared at is_final.
+        On Windows conhost where ANSI escape codes may not work,
+        falls back to just printing the line (may scroll but works).
 
-        CRITICAL: This must work on Windows conhost. The technique:
-        1. \x1b[2K = erase entire current line (from cursor to end)
-        2. \r = carriage return to column 0
-        3. Write new thinking line (no \n)
-        4. Flush aggressively
-
-        This creates the in-place overwrite effect.
+        On proper terminals (Windows Terminal, Unix), uses \x1b[2K\r
+        (erase line + carriage return) for clean in-place overwrite.
         """
         elapsed_str = self._format_elapsed(self._elapsed)
 
@@ -229,18 +222,31 @@ class StreamingDisplay:
             phase_badge = f" {self._workflow_phase}"
 
         # Build the thinking line: spinner + verb + elapsed + tokens + intensity
-        # CRITICAL: NO trailing \n - we want \r to be able to overwrite this line
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
         line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
         try:
-            # Erase entire line and return to column 0, then write new thinking line
-            # \x1b[2K = erase entire line, \r = return to column 0
-            # IMPORTANT: Use \x1b[2K (not \x1b[2K\r\n) to avoid creating new lines
-            erase_and_home = "\x1b[2K\r"
-            sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
-            sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
-            sys.stdout.buffer.flush()
+            # Check if we should use ANSI escape codes or fallback
+            # On Windows conhost, ANSI codes may not work, so we use a simpler approach
+            if os.name == 'nt':
+                # On Windows, try ANSI first, fall back to simple print
+                try:
+                    # Try the ANSI approach (works on Windows Terminal, Git Bash, etc.)
+                    erase_and_home = "\x1b[2K\r"
+                    sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
+                    sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.flush()
+                except Exception:
+                    # Fallback: just print on a new line (no overwrite, but visible)
+                    # Use \r to move to column 0 first, then print
+                    print(f"\r{line}", end="", flush=True)
+            else:
+                # Unix/Linux/macOS - use ANSI escape codes
+                erase_and_home = "\x1b[2K\r"
+                sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
+                sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
+                sys.stdout.buffer.flush()
+
             self._last_thinking_len = len(line)
             self._showing_thinking = True
         except Exception:

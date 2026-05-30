@@ -162,7 +162,8 @@ class VimKeys:
 
         @kb.add('g', filter=has_focus)
         def handle_g(event):
-            pass
+            self._vim_state["g_pressed"] = True
+            # Don't move cursor - let vim mode handle it
 
         @kb.add('G', filter=has_focus)
         def handle_shift_g(event):
@@ -171,15 +172,12 @@ class VimKeys:
 
         @kb.add('/')
         def handle_slash(event):
-            # Insert / and trigger completion menu
+            """Handle / key to trigger slash command completion menu."""
+            # Insert the slash
             event.current_buffer.insert('/')
-            # Request completion menu to open
+            # Force completion menu to open showing slash commands
             try:
-                from prompt_toolkit.application import get_app
-                app = get_app()
-                if app:
-                    # Force completion menu to appear
-                    event.current_buffer.start_completion(select_first=False)
+                event.current_buffer.start_completion(select_first=False)
             except Exception:
                 pass
 

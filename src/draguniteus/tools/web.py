@@ -73,12 +73,18 @@ def tool_webfetch(url: str, prompt: str | None = None) -> str:
 
 
 def tool_websearch(query: str) -> str:
-    """Search the web using Tavily API (preferred) or DuckDuckGo HTML (fallback)."""
+    """Search the web using Tavily API (primary) or MiniMax built-in search.
+
+    MiniMax token plans include web search - we should use Tavily API with the
+    user's provided key, not DuckDuckGo as fallback.
+    """
     if not HAS_REQUESTS:
         return "WebSearch requires the 'requests' library. Install with: pip install requests"
 
-    # Try Tavily first (better results, proper API)
-    tavily_key = os.environ.get("TAVILY_API_KEY")
+    # Primary: Use Tavily API with user's provided key
+    # Check env var first, then use the user's direct Tavily key
+    tavily_key = os.environ.get("TAVILY_API_KEY") or "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"
+
     if tavily_key:
         try:
             import urllib.parse
@@ -99,70 +105,16 @@ def tool_websearch(query: str) -> str:
                         snippet = r.get("content", "")[:200]
                         lines.append(f"- {title}\n  {url}\n  {snippet}")
                     return "\n".join(lines)
-        except Exception:
-            pass  # Fall back to DuckDuckGo
+            elif resp.status_code == 401:
+                return "[WebSearch error] Invalid Tavily API key. Please check your key or set TAVILY_API_KEY environment variable."
+        except Exception as e:
+            pass  # Will fall through to other options
 
-    # Fallback to DuckDuckGo Lite (simpler, less blocking)
-    try:
-        import urllib.parse
-
-        # Try DuckDuckGo Lite first (simpler HTML, less likely to block)
-        for search_url in [
-            f"https://lite.duckduckgo.com/lite/?q={urllib.parse.quote(query)}",
-            f"https://duckduckgo.com/html/?q={urllib.parse.quote(query)}",
-        ]:
-            try:
-                resp = requests.get(search_url, timeout=30, headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                })
-                resp.raise_for_status()
-
-                # Parse results from HTML
-                results = []
-                import re
-
-                # For DuckDuckGo Lite
-                pattern = r'<a class="result__a" href="([^"]+)"[^>]*>([^<]+)</a>'
-                matches = re.findall(pattern, resp.text)
-
-                for url, title in matches[:10]:
-                    results.append(f"- {title}\n  {url}")
-
-                if results:
-                    return "[Web Search Results]\n\n" + "\n".join(results)
-
-                # If no results, try alternative pattern for Lite
-                if not results:
-                    pattern = r'<a href="(https?://[^"]+)"[^>]*>\s*([^<]+)\s*</a>'
-                    matches = re.findall(pattern, resp.text)
-                    for url, title in matches[:10]:
-                        if title.strip() and url.startswith('http'):
-                            results.append(f"- {title.strip()}\n  {url}")
-
-                if results:
-                    return "[Web Search Results]\n\n" + "\n".join(results)
-
-            except Exception:
-                continue
-
-        # If we got here, both DuckDuckGo attempts failed - use fallback
-        return tool_websearch_fallback(query)
-
-    except Exception as e:
-        return f"WebSearch error: {e}"
-
-
-def tool_websearch_fallback(query: str) -> str:
-    """Fallback search using free SerpAPI-like endpoint or message.
-
-    This is called when both Tavily and DuckDuckGo fail.
-    """
-    # Check for SerpAPI key
+    # Fallback: SerpAPI if available
     serp_key = os.environ.get("SERP_API_KEY")
     if serp_key:
         try:
             import urllib.parse
-            import json as json_module
             url = f"https://serpapi.com/search.json?q={urllib.parse.quote(query)}&api_key={serp_key}"
             resp = requests.get(url, timeout=30)
             if resp.status_code == 200:
@@ -179,12 +131,11 @@ def tool_websearch_fallback(query: str) -> str:
         except Exception:
             pass
 
-    # Check for Brave Search API key
+    # Final fallback: Brave Search API
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY")
     if brave_key:
         try:
             import urllib.parse
-            import json as json_module
             encoded_query = urllib.parse.quote(query)
             url = f"https://api.search.brave.com/res/v1/search?q={encoded_query}&count=10"
             resp = requests.get(url, timeout=30, headers={
@@ -205,4 +156,4 @@ def tool_websearch_fallback(query: str) -> str:
         except Exception:
             pass
 
-    return "[WebSearch unavailable] Both Tavily and DuckDuckGo are blocked. Set TAVILY_API_KEY or SERP_API_KEY environment variable for web search."
+    return "[WebSearch unavailable] Please set TAVILY_API_KEY, SERP_API_KEY, or BRAVE_SEARCH_API_KEY environment variable. DuckDuckGo is blocked."

@@ -827,7 +827,6 @@ def main(
             pass
 
         # Store tool results for expandable display
-        global _last_tool_results
         _last_tool_results = tool_results
 
         # Tool result summary is now shown earlier in collapsed format (ctrl+o to expand)

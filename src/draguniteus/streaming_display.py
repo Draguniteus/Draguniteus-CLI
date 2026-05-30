@@ -149,7 +149,7 @@ class StreamingDisplay:
         """Update thinking line on each streaming event.
 
         Args:
-            thinking: accumulated thinking text
+            thinking: accumulated thinking text (ignored - only status shown during streaming)
             response: accumulated response text
             tokens: current output token count
             tool_name: name of tool being called (if any)
@@ -179,12 +179,9 @@ class StreamingDisplay:
                 self._thinking_verb = get_thinking_verb()
 
         # Update thinking line via \r (in-place, works on Windows)
+        # NOTE: We do NOT print thinking content here - only the status line
         if self.full_drama:
             self._thinking_print()
-
-        # NOTE: Thinking content is NOT shown during streaming to avoid interleaving issues.
-        # The \x1b[2K\r can only erase the current line, not content printed on lines below.
-        # Thinking content will be shown after streaming completes via show_thinking_content().
 
     def _thinking_print(self) -> None:
         """Print thinking line that overwrites itself in-place.
@@ -193,6 +190,14 @@ class StreamingDisplay:
         overwrite the thinking line regardless of cursor position.
         Does NOT include trailing \n so response text can follow on same line
         after thinking line is cleared at is_final.
+
+        CRITICAL: This must work on Windows conhost. The technique:
+        1. \x1b[2K = erase entire current line (from cursor to end)
+        2. \r = carriage return to column 0
+        3. Write new thinking line (no \n)
+        4. Flush aggressively
+
+        This creates the in-place overwrite effect.
         """
         elapsed_str = self._format_elapsed(self._elapsed)
 
@@ -224,36 +229,20 @@ class StreamingDisplay:
             phase_badge = f" {self._workflow_phase}"
 
         # Build the thinking line: spinner + verb + elapsed + tokens + intensity
+        # CRITICAL: NO trailing \n - we want \r to be able to overwrite this line
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
         line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
-
-        # Only add \n when thinking is done (to separate from response)
-        # When thinking is active, keep it on same line so \r can overwrite
-        if self._thinking_done:
-            line = line + "\n"
 
         try:
             # Erase entire line and return to column 0, then write new thinking line
             # \x1b[2K = erase entire line, \r = return to column 0
+            # IMPORTANT: Use \x1b[2K (not \x1b[2K\r\n) to avoid creating new lines
             erase_and_home = "\x1b[2K\r"
             sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
             sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
             self._last_thinking_len = len(line)
             self._showing_thinking = True
-        except Exception:
-            pass
-
-    def _thinking_print_plain(self) -> None:
-        """Fallback plain thinking line without ANSI colors."""
-        elapsed_str = self._format_elapsed(self._elapsed)
-        spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
-        # Plain version also does NOT include thinking content to avoid overlap
-        line = f"\x1b[2K\r{spinner} {self._thinking_verb}... ({elapsed_str})"
-        try:
-            sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
-            sys.stdout.buffer.flush()
-            self._last_thinking_len = len(line)
         except Exception:
             pass
 
@@ -278,8 +267,8 @@ class StreamingDisplay:
                 if len(lines) > 3:
                     preview = "\n".join(lines[:3]) + "\n  [...]"
 
-            # Print thinking content with dim styling (no leading \n - thinking line already ended with \n)
-            thinking_display = f"  {dim}{preview}{reset}\n"
+            # Print thinking content with dim styling (with leading newline to separate from thinking line)
+            thinking_display = f"\n  {dim}{preview}{reset}\n"
             sys.stdout.buffer.write(thinking_display.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
         except Exception:
@@ -324,11 +313,11 @@ class StreamingDisplay:
                     sys.stdout.buffer.write("  \n".encode('utf-8', errors='replace'))
                     continue
 
-                if any(k in line for k in ["error", "ERROR", "failed", "FAILED", "FAIL"]):
+                if any(k in line for line in ["error", "ERROR", "failed", "FAILED", "FAIL"]):
                     color = RED
-                elif any(k in line for k in ["warning", "WARNING", "WARN", "deprecated"]):
+                elif any(k in line for line in ["warning", "WARNING", "WARN", "deprecated"]):
                     color = YELLOW
-                elif any(k in line for k in ["pass", "PASS", "ok", "OK", "success", "SUCCESS"]):
+                elif any(k in line for line in ["pass", "PASS", "ok", "OK", "success", "SUCCESS"]):
                     color = GREEN
                 elif line.startswith("+") or line.startswith(">"):
                     color = CYAN
@@ -348,7 +337,7 @@ class StreamingDisplay:
                     sys.stdout.buffer.flush()
 
             if truncated:
-                footer = f"  {DIM}... ({total - max_lines} more lines) ...{reset}\n"
+                footer = f"  {dim}... ({total - max_lines} more lines) ...{reset}\n"
                 sys.stdout.buffer.write(footer.encode('utf-8', errors='replace'))
 
             footer = f"  {cyan}--- end ---{reset}\n"
@@ -364,17 +353,10 @@ class StreamingDisplay:
                 pass
 
     def set_search_context(self, patterns: list[str], files_reading: list[str], current_file: str = "") -> None:
-        """Set search context for display.
-
-        Args:
-            patterns: list of search patterns (e.g., ["foo", "bar"])
-            files_reading: list of files being read (e.g., ["config.py", "cli.py"])
-            current_file: file currently being processed
-        """
+        """Set search context for display."""
         self._search_patterns = patterns
         self._files_reading = files_reading
         self._current_file = current_file
-        # Also set tool_path for single file context
         if current_file and not self._tool_path:
             self._tool_path = current_file
 
@@ -387,7 +369,7 @@ class StreamingDisplay:
         self._background_tasks = enabled
 
     def set_workflow_phase(self, phase: str) -> None:
-        """Set the workflow phase badge (e.g., PLANNING, EXEC, VERIFY, ITERATE)."""
+        """Set the workflow phase badge."""
         self._workflow_phase = phase
 
     def stop(self) -> None:

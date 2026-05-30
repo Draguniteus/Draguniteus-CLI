@@ -183,7 +183,7 @@ def _get_session_store() -> SessionStore:
 
 from draguniteus.memory.manager import memory_manager
 
-SYSTEM_PROMPT = """You are Draguniteus, a powerful dragon-themed CLI coding agent.
+SYSTEM_PROMPT = """You are Draguniteus, a CLI coding agent powered by MiniMax.
 
 You operate as a fully agentic coding assistant:
 - Plan before acting: analyze the task, identify files to examine, then execute
@@ -210,10 +210,10 @@ You have access to these tools:
 **MCP Servers:** GitHub (GitHub API), filesystem (local file access), minimax (MiniMax API)
 
 Communication style:
-- Confident, powerful, slightly theatrical dragon mentor energy
-- Use [D] prefix for thoughts, dragon-themed language
-- Be helpful, precise, and efficient
+- Professional, helpful, precise, and efficient
 - Use markdown formatting in responses
+- When using WebSearch or other tools that return raw data, ALWAYS synthesize the results into a clear, concise response. Do NOT dump raw tool output. Format the information nicely for the user.
+- Example: Instead of dumping WebSearch results, say "Weather in Norfolk: Partly cloudy with a low of 65°F, winds SW at 5-10 mph. Breaking news: [headline 1], [headline 2], etc."
 
 When executing tools, wait for results before continuing.
 When you need user approval for a risky action, say so clearly."""
@@ -716,63 +716,38 @@ def main(
 
                 # Tool execution now happens inside stream_one_turn (in parallel during streaming)
                 # At is_final=True, tool_calls is the executed tool_results
-                # Display tool results if available
+                # Display tool results - Claude Code style: collapsed by default, expandable via ctrl+o
                 if tool_calls and _full_drama:
                     dim_color = "\033[90m"
                     reset = "\033[0m"
-                    # Regex for stripping HTML tags
-                    import re
-                    html_stripper = re.compile(r'<[^>]+>')
-                    # Challenge form detection (shows DuckDuckGo is blocking us)
-                    challenge_pattern = re.compile(r'id="challenge-form"|name="q" value="[^"]*" action="//duckduckgo\.com', re.IGNORECASE)
-                    for tr in tool_calls:  # tool_calls here is actually tool_results (executed)
-                        name = tr.get("tool", "?")
-                        result = str(tr.get("result", ""))
-                        # Clean HTML from results (Claude Code shows clean output, not raw HTML)
-                        # Trigger if: starts with < OR contains challenge-form (DuckDuckGo blocking)
-                        if name in ("WebSearch", "mcp__web__search") or 'challenge-form' in result or (result.strip().startswith('<') and '</' in result):
-                            # Check if it's a DuckDuckGo challenge page
-                            if 'duckduckgo' in result.lower() or 'challenge-form' in result:
-                                # DuckDuckGo is blocking - extract what we can or show error
-                                clean_lines = []
-                                for line in result.split('\n'):
-                                    # Keep lines with actual content (not HTML tags or form elements)
-                                    if line.strip() and not line.strip().startswith('<') and 'action=' not in line:
-                                        clean = html_stripper.sub('', line).strip()
-                                        if clean and len(clean) > 3:
-                                            clean_lines.append(clean)
-                                if clean_lines:
-                                    result = "[WebSearch blocked by DuckDuckGo - partial results]\n\n" + "\n".join(clean_lines[:20])
-                                else:
-                                    result = "[WebSearch unavailable] DuckDuckGo is blocking requests. Set TAVILY_API_KEY or SERP_API_KEY for web search."
+
+                    # Store tool results for ctrl+o expansion
+                    global _last_tool_results
+                    _last_tool_results = list(tool_calls)
+
+                    # Show collapsed summary instead of raw results
+                    from collections import Counter
+                    counts = Counter(tr.get("tool", "?") for tr in tool_calls)
+                    if len(counts) == 1:
+                        name = list(counts.keys())[0]
+                        n = list(counts.values())[0]
+                        summary = f"Called {name}" if n == 1 else f"Called {name} {n} times"
+                    else:
+                        summary_parts = []
+                        for name, n in counts.items():
+                            if n == 1:
+                                summary_parts.append(f"1x {name}")
                             else:
-                                # Normal HTML stripping for other sources
-                                result = html_stripper.sub('', result)
-                                result = result.replace('&nbsp;', ' ').replace('&', '&')
-                                result = result.strip()
-                        if name == "Bash" and len(result) > 2048:
-                            try:
-                                display.show_output(result, title=f"{name} output")
-                            except Exception:
-                                for ln in result.split('\n')[:50]:
-                                    try:
-                                        sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
-                                    except UnicodeEncodeError:
-                                        sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
-                        else:
-                            try:
-                                sys.stdout.buffer.write(f"\n{dim_color}⎿ {name}{reset}\n".encode('utf-8', errors='replace'))
-                            except UnicodeEncodeError:
-                                sys.stdout.buffer.write(f"\n> {name}\n".encode('utf-8', errors='replace'))
-                            lines = result.split('\n')
-                            for ln in lines[:50]:
-                                try:
-                                    sys.stdout.buffer.write(f"  {ln}\n".encode('utf-8', errors='replace'))
-                                except UnicodeEncodeError:
-                                    sys.stdout.buffer.write(f"  {ln.encode('ascii', errors='replace').decode()}\n".encode('utf-8', errors='replace'))
-                            if len(lines) > 50:
-                                sys.stdout.buffer.write(f"  {dim_color}[...+ {len(lines) - 50} lines]{reset}\n".encode('utf-8', errors='replace'))
-                    sys.stdout.buffer.flush()
+                                summary_parts.append(f"{n}x {name}")
+                        summary = "Called " + ", ".join(summary_parts)
+
+                    # Show collapsible summary (Claude Code style)
+                    try:
+                        collapsible_line = f"\n{dim_color}{summary} (ctrl+o to expand){reset}\n"
+                        sys.stdout.buffer.write(collapsible_line.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.flush()
+                    except Exception:
+                        pass
 
                 # At is_final, tool_calls contains executed tool_results from stream_one_turn
                 if is_final and tool_calls:
@@ -855,18 +830,7 @@ def main(
         global _last_tool_results
         _last_tool_results = tool_results
 
-        # Show collapsed tool call summary
-        if tool_results:
-            from collections import Counter
-            counts = Counter(tr.get("tool", "?") for tr in tool_results)
-            if len(counts) == 1:
-                name = list(counts.keys())[0]
-                n = list(counts.values())[0]
-                summary = f"Called {name}" if n == 1 else f"Called {name} {n} times"
-            else:
-                summary = ", ".join(f"{v}x {k}" for k, v in counts.items())
-                summary = f"Called {summary}"
-            _print(gray(summary))
+        # Tool result summary is now shown earlier in collapsed format (ctrl+o to expand)
 
         # Print Claude Code-style recap: "∴ Thinking… analysis" and "※ recap: summary"
         if _full_drama and user_input:

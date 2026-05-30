@@ -78,8 +78,8 @@ class DraguniteusClient:
             kwargs["tools"] = tools
         if system:
             kwargs["system"] = str(system)
-        if betas:
-            kwargs["betas"] = betas
+        # NOTE: betas parameter is accepted for compatibility but NOT passed to API
+        # MiniMax API does not support the betas parameter
 
         import copy
         import json
@@ -117,8 +117,8 @@ class DraguniteusClient:
             kwargs["tools"] = tools
         if system:
             kwargs["system"] = system
-        if betas:
-            kwargs["betas"] = betas
+        # NOTE: betas parameter is accepted for compatibility but NOT passed to API
+        # MiniMax API does not support the betas parameter
 
         return self._sync.messages.create(**kwargs)
 

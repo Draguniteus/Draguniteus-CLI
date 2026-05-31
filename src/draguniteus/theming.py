@@ -493,53 +493,61 @@ def print_recap(text: str) -> None:
 
 
 def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
-    """Print Claude Code-style bottom bar with toggle controls.
+    """Print Claude Code-style bottom bar with edit controls.
 
-    Format: (ctrl+o to toggle · ctrl+e to show all) - all dim gray (NO newline)
-    Or when there are pending edits: (shift+tab to cycle) · esc to interrupt
+    ONLY shown when there are pending edits. Otherwise, the footer shows only
+    '? for shortcuts' (via print_shortcuts_line).
     """
     if has_edits and edit_count > 0:
-        # Purple for "accept edits on", dim for rest
+        # Purple for "accept edits on", dim for rest - ONLY when edits exist
         bar = f"{DIM}(shift+tab to cycle) · esc to interrupt · {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}"
-    else:
-        bar = f"{DIM}(ctrl+o to toggle · ctrl+e to show all){RESET}"
-    try:
-        sys.stdout.buffer.write(bar.encode('utf-8', errors='replace'))
-        sys.stdout.buffer.flush()
-    except Exception:
         try:
-            print(bar, end="")
+            sys.stdout.buffer.write(bar.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
         except Exception:
-            pass
+            try:
+                print(bar, end="")
+            except Exception:
+                pass
+    # No else - when no edits, only show '? for shortcuts' in footer
 
 
 def print_shortcuts_line() -> None:
-    """Print '? for shortcuts' line (Claude Code style, dim gray) - NO newline, stays on same line."""
+    """Print '? for shortcuts' line (Claude Code style, dim gray) - NEWLINE before, NO newline after.
+
+    This is the ONLY permanent element in the footer. All other hints (ctrl+o, ctrl+e)
+    appear contextually next to collapsed content, not in the footer.
+    """
     try:
-        sys.stdout.buffer.write(f"  {DIM}? for shortcuts{RESET}".encode('utf-8', errors='replace'))
+        # Newline before, no newline after (stays on same line)
+        sys.stdout.buffer.write(f"\n  {DIM}? for shortcuts{RESET}".encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()
     except Exception:
         try:
-            print(f"  {DIM}? for shortcuts{RESET}", end="")
+            print(f"\n  {DIM}? for shortcuts{RESET}", end="")
         except Exception:
             pass
 
 
-def print_tool_call(tool_name: str, args_display: str = "", status: str = "") -> None:
+def print_tool_call(tool_name: str, args_display: str = "", status: str = "", collapsed_hint: bool = False) -> None:
     """Print a tool call like Claude Code: ● Bash(command) (status)
 
     - "●" is white/bright
     - tool_name (Bash, Grep, etc.) is cyan
     - args_display is white
     - status in parentheses is dim gray
+    - collapsed_hint: if True, adds "(ctrl+o to expand)" hint like Claude Code
     """
     if status:
         status_str = f"{DIM} ({status}){RESET}"
     else:
         status_str = ""
 
+    # Add ctrl+o hint if this is a collapsed summary
+    ctrl_hint = f"  {DIM}(ctrl+o to expand){RESET}" if collapsed_hint else ""
+
     try:
-        msg = f"  {WHITE}●{RESET} {CYAN}{tool_name}{RESET}({WHITE}{args_display}{RESET}){status_str}"
+        msg = f"  {WHITE}●{RESET} {CYAN}{tool_name}{RESET}({WHITE}{args_display}{RESET}){status_str}{ctrl_hint}"
         sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()
     except Exception:
@@ -553,6 +561,73 @@ def stream_markdown(text: str, live: Live | None = None) -> None:
         live.update(md)
     else:
         _print(md)
+
+
+# ------------------------------------------------------------------
+# Collapsed Output Helpers (Claude Code style)
+# ------------------------------------------------------------------
+
+def print_collapsed_summary(
+    success: bool = True,
+    action: str = "",
+    details: str = "",
+    line_count: int = 0,
+) -> None:
+    """Print a Claude Code-style collapsed summary with ctrl+o hint.
+
+    Format: ✓ Executed bash: ls -la (8 lines) (ctrl+o to expand)
+
+    Args:
+        success: True for green checkmark, False for red X
+        action: What was done (e.g., "Executed bash", "Read files", "Edited files")
+        details: Additional details (e.g., the command or file paths)
+        line_count: Number of lines in output (shown in parentheses)
+    """
+    # Checkmark or X based on success
+    bullet = f"{GREEN}✓{RESET}" if success else f"{RED}✗{RESET}"
+
+    # Build line count string
+    if line_count > 0:
+        lines_str = f" ({line_count} lines)"
+    else:
+        lines_str = ""
+
+    # The main summary line
+    summary = f"{bullet} {action} {details}{lines_str}"
+
+    # The ctrl+o hint
+    hint = f"  {DIM}(ctrl+o to expand){RESET}"
+
+    try:
+        msg = f"  {summary}{hint}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+
+
+def print_thinking_collapsed(seconds: float, token_count: int = 0) -> None:
+    """Print a collapsed thinking block like Claude Code.
+
+    Format: ⟐ Thinking (2.4s, 642 tokens) (ctrl+o to expand)
+    """
+    token_str = f", {token_count} tokens" if token_count > 0 else ""
+    time_str = f"{seconds:.1f}s"
+    action = f"Thinking ({time_str}{token_str})"
+
+    # Use a diamond symbol for thinking
+    bullet = f"{ORANGE}⟐{RESET}"
+
+    # The ctrl+o hint
+    hint = f"  {DIM}(ctrl+o to expand){RESET}"
+
+    try:
+        msg = f"  {bullet} {action}{hint}"
+        sys.stdout.buffer.write(f"{msg}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
+
 
 def make_thinking_display(thinking: str) -> Text:
     """Create a minimal thinking display block."""

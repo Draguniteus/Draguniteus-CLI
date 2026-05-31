@@ -325,8 +325,17 @@ class PromptToolkitInput:
             on_rewind=self._on_rewind,
         )
 
+        # Style with gray background for input area (Claude Code style)
+        # The input field gets a subtle dark background to visually separate it
         style = Style.from_dict({
             "prompt": "#bd93f9 bold",
+            # Input text styling
+            "input": "#ffffff",
+            # Cursor styling
+            "cursor": "#ff79c6 bold",
+            # Selection styling
+            "selected": "bg:#44475a",
+            # Bottom toolbar (if used)
             "toolbar": "bg:#222222 #00ff88",
         })
 

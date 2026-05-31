@@ -178,8 +178,18 @@ class VimKeys:
         @kb.add('/')
         def handle_slash(event):
             """Handle / key to trigger slash command completion menu."""
-            # Insert the slash - complete_while_typing=True will trigger completions
+            # Insert the slash character
             event.current_buffer.insert('/')
+            # Force trigger completion menu
+            # Get the completion menu and display it
+            try:
+                from prompt_toolkit.application.current import get_app
+                app = get_app()
+                # Request a completion (this triggers the menu to show if completions exist)
+                if event.current_buffer.text.startswith('/'):
+                    app.current_buffer.start_completion(select_first=False)
+            except Exception:
+                pass
 
         @kb.add('n', filter=has_focus)
         def handle_n(event):

@@ -500,7 +500,7 @@ def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
     """
     if has_edits and edit_count > 0:
         # Purple for "accept edits on", dim for rest
-        bar = f"  {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}{DIM} (shift+tab to cycle) · esc to interrupt{RESET}"
+        bar = f"{DIM}  (shift+tab to cycle) · esc to interrupt · {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}"
     else:
         bar = f"{DIM}  (ctrl+o to toggle · ctrl+e to show all){RESET}"
     try:
@@ -516,11 +516,11 @@ def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
 def print_shortcuts_line() -> None:
     """Print '? for shortcuts' line (Claude Code style, dim gray)."""
     try:
-        sys.stdout.buffer.write(f"{DIM}  ? for shortcuts{RESET}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.write(f"{DIM}  ? for shortcuts{RESET}".encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()
     except Exception:
         try:
-            print(f"{DIM}  ? for shortcuts{RESET}")
+            print(f"{DIM}  ? for shortcuts{RESET}", end="")
         except Exception:
             pass
 

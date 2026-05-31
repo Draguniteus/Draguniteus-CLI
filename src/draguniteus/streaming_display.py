@@ -103,6 +103,7 @@ class StreamingDisplay:
         self._lines_added: int = 0
         self._showing_thinking: bool = False
         self._last_thinking_len: int = 0
+        self._thinking_line: str = ""  # Store current thinking line for cleanup
         self._background_tasks: bool = False
         self._tool_name: str | None = None
         self._tool_path: str = ""
@@ -186,11 +187,11 @@ class StreamingDisplay:
     def _thinking_print(self) -> None:
         """Print thinking line that overwrites itself in-place.
 
-        On Windows conhost where ANSI escape codes may not work,
-        falls back to just printing the line (may scroll but works).
+        Uses ANSI escape codes for clean in-place updates:
+        - \x1b[2K\r to erase line and return to column 0
+        - Only prints on a fresh line (never after response text)
 
-        On proper terminals (Windows Terminal, Unix), uses \x1b[2K\r
-        (erase line + carriage return) for clean in-place overwrite.
+        The thinking line format: ✽ Sketching... (time · token count)
         """
         elapsed_str = self._format_elapsed(self._elapsed)
 
@@ -223,37 +224,34 @@ class StreamingDisplay:
 
         # Build the thinking line: spinner + verb + elapsed + tokens + intensity
         spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
-        line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
+        thinking_line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
-        # CRITICAL: Print thinking line immediately on first call (even before first event)
-        # Otherwise nothing appears until streaming events arrive
         try:
-            # Check if we should use ANSI escape codes or fallback
-            # On Windows conhost, ANSI codes may not work, so we use a simpler approach
-            if os.name == 'nt':
-                # On Windows, try ANSI first, fall back to simple print
-                try:
-                    # Try the ANSI approach (works on Windows Terminal, Git Bash, etc.)
-                    erase_and_home = "\x1b[2K\r"
-                    sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
-                    sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
-                    sys.stdout.buffer.flush()
-                    sys.stdout.flush()  # Force flush all buffers
-                except Exception:
-                    # Fallback: print with \r to move to column 0, then flush
-                    print(f"\r{line}", end="", flush=True)
-            else:
-                # Unix/Linux/macOS - use ANSI escape codes
-                erase_and_home = "\x1b[2K\r"
-                sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
-                sys.stdout.buffer.write(line.encode('utf-8', errors='replace'))
-                sys.stdout.buffer.flush()
-                sys.stdout.flush()  # Force flush all buffers
+            # First, ensure we're on a fresh line (clear anything remaining on current line)
+            # Use \x1b[2K\r which = erase entire line + return to column 0
+            # This ONLY works correctly if we're already on a new line
+            erase_and_home = "\x1b[2K\r"
+            sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
+            sys.stdout.buffer.write(thinking_line.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
 
-            self._last_thinking_len = len(line)
+            self._last_thinking_len = len(thinking_line)
+            self._thinking_line = thinking_line  # Store for cleanup
             self._showing_thinking = True
         except Exception:
             pass
+
+    def clear_thinking_line(self) -> None:
+        """Clear the thinking line completely (call when switching to response)."""
+        if self._showing_thinking:
+            try:
+                # Erase line and print spaces to fully clear any leftover chars
+                clear = "\x1b[2K\r" + " " * max(self._last_thinking_len, 50) + "\x1b[2K\r"
+                sys.stdout.buffer.write(clear.encode('utf-8'))
+                sys.stdout.buffer.flush()
+                self._showing_thinking = False
+            except Exception:
+                pass
 
     def show_thinking_content(self, thinking: str) -> None:
         """Show thinking content on its own lines when thinking block ends.

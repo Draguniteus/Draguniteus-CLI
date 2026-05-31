@@ -672,15 +672,19 @@ def main(
             if is_final:
                 elapsed = time.time() - start
 
-                # Step 1: Clear thinking line FIRST and move to fresh line
+                # Step 1: Clear thinking line COMPLETELY (move to fresh line first)
                 if _full_drama:
                     try:
-                        sys.stdout.buffer.write("\x1b[2K\r\n".encode('utf-8'))
+                        # Erase thinking line and move to fresh line
+                        if display:
+                            display.clear_thinking_line()
+                        # Then print newline to ensure we're on fresh line
+                        sys.stdout.buffer.write("\n".encode('utf-8'))
                         sys.stdout.buffer.flush()
                     except Exception:
                         pass
 
-                # Step 1.5: Print timestamp header like Claude Code: "09:27 PM MiniMax-M2.7"
+                # Step 2: Print timestamp header like Claude Code: "09:27 PM MiniMax-M2.7"
                 if _full_drama:
                     from draguniteus.theming import CYAN, RESET
                     ts = time.strftime("%I:%M %p")
@@ -692,13 +696,12 @@ def main(
                     except Exception:
                         pass
 
-                # Step 2: Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
+                # Step 3: Print completion indicator: ✻ [verb]ed for Xs (Claude Code style)
                 if _full_drama:
                     from draguniteus.theming import print_thinking
                     print_thinking(elapsed, _full_drama)
 
-                # Step 3: THINKING CONTENT HIDDEN - Claude Code style (only shows thinking time, not content)
-                # Step 4: Stream response text with proper markdown rendering
+                # Step 4: Print response text on a FRESH LINE (after completion indicator)
                 if _full_drama and response_text:
                     # Use Rich to render markdown properly (bold, italic, code blocks, etc.)
                     try:
@@ -889,6 +892,10 @@ def main(
         except Exception:
             pass
 
+        # Print FULL WIDTH DIVIDER before bottom bar (Claude Code style framing)
+        if _full_drama:
+            print_divider(_full_drama)
+
         # Show bottom bar in Claude Code style (always show ctrl+o/ctrl+e controls)
         if _full_drama:
             if _pending_edits:
@@ -896,8 +903,10 @@ def main(
             else:
                 print_bottom_bar(has_edits=False)
 
-        print_divider(_full_drama)
+        # Print shortcuts hint on SAME LINE as bottom bar (no extra newline)
         print_shortcuts_line()
+
+        # Print blank line before prompt (Claude Code style)
         console.print()
 
         # --- Auto-checkpoint every N turns ---

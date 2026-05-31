@@ -23,12 +23,12 @@ import sys
 import time
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, ConsoleRenderable, NewLine
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
-from rich.console import ConsoleRenderable
+from rich.console import RenderOptions
 
 from draguniteus.theming import (
     CYAN, DIM, ORANGE, RESET, WHITE, BLUE, RED, GREEN, YELLOW,
@@ -74,12 +74,8 @@ def live_output_line(line: str, is_stderr: bool = False) -> None:
             pass
 
 
-class ThinkingLine(ConsoleRenderable):
-    """A Rich renderable that displays the thinking status line.
-
-    This is used with Rich.Live to keep the thinking line anchored at the
-    bottom of the terminal while content streams above it.
-    """
+class ThinkingLine:
+    """A simple class that holds thinking line data, rendered as Rich Text."""
 
     def __init__(
         self,
@@ -92,7 +88,6 @@ class ThinkingLine(ConsoleRenderable):
         intensity: str = "",
         color: str = "",
     ):
-        super().__init__()
         self.spinner = spinner
         self.verb = verb
         self.elapsed = elapsed
@@ -102,8 +97,8 @@ class ThinkingLine(ConsoleRenderable):
         self.intensity = intensity
         self.color = color or DIM
 
-    def render(self, console: Console) -> Text:
-        """Render the thinking line as styled text."""
+    def to_rich_text(self) -> Text:
+        """Convert to Rich Text for display."""
         parts = [f"{ORANGE}{self.spinner}{RESET} {self.color}{self.verb}...{RESET}"]
         parts.append(f"({self.elapsed})")
 
@@ -261,8 +256,12 @@ class StreamingDisplay:
 
         # Update thinking line via Rich.Live (in-place, anchored at bottom)
         if self.full_drama and self._live:
+            # Always regenerate the thinking line
             self._update_thinking_line()
-            self._live.update(self._thinking_line, refresh=True)
+
+            # Pass the Rich Text renderable to Live.update(), not the raw ThinkingLine object
+            if self._thinking_line is not None:
+                self._live.update(self._thinking_line.to_rich_text(), refresh=True)
 
     def show_tool_start(self, tool_name: str, args_display: str = "", path: str = "") -> None:
         """Show a pulsing tool-start bullet immediately when tool_use block starts."""

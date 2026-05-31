@@ -495,32 +495,32 @@ def print_recap(text: str) -> None:
 def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
     """Print Claude Code-style bottom bar with toggle controls.
 
-    Format: (ctrl+o to toggle · ctrl+e to show all) - all dim gray
+    Format: (ctrl+o to toggle · ctrl+e to show all) - all dim gray (NO newline)
     Or when there are pending edits: (shift+tab to cycle) · esc to interrupt
     """
     if has_edits and edit_count > 0:
         # Purple for "accept edits on", dim for rest
-        bar = f"{DIM}  (shift+tab to cycle) · esc to interrupt · {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}"
+        bar = f"{DIM}(shift+tab to cycle) · esc to interrupt · {CLAUDE_PURPLE}⏵⏵ accept edits on{RESET}"
     else:
-        bar = f"{DIM}  (ctrl+o to toggle · ctrl+e to show all){RESET}"
+        bar = f"{DIM}(ctrl+o to toggle · ctrl+e to show all){RESET}"
     try:
-        sys.stdout.buffer.write(f"{bar}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.write(bar.encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()
     except Exception:
         try:
-            print(bar)
+            print(bar, end="")
         except Exception:
             pass
 
 
 def print_shortcuts_line() -> None:
-    """Print '? for shortcuts' line (Claude Code style, dim gray)."""
+    """Print '? for shortcuts' line (Claude Code style, dim gray) - NO newline, stays on same line."""
     try:
-        sys.stdout.buffer.write(f"{DIM}  ? for shortcuts{RESET}\n".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.write(f"  {DIM}? for shortcuts{RESET}".encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()
     except Exception:
         try:
-            print(f"{DIM}  ? for shortcuts{RESET}")
+            print(f"  {DIM}? for shortcuts{RESET}", end="")
         except Exception:
             pass
 

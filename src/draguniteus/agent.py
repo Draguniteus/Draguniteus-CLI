@@ -1,6 +1,7 @@
 """Main agent loop: handles streaming, tool dispatch, and response rendering."""
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Iterator

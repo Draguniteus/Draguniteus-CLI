@@ -1,17 +1,19 @@
 """Progressive streaming display — matches Claude Code's real-time output.
 
-Uses ANSI carriage-return (\r) for in-place thinking line updates, which works
-reliably on Windows conhost unlike cursor-positioning approaches.
+Uses Rich.Live for anchored thinking line at bottom of terminal while
+response content streams above it. This ensures the thinking line stays
+in place and overwrites itself, not scrolling with content.
 
 Features:
+  - Rich.Live for fixed-position thinking line (stays at bottom, overwrites in place)
   - Animated star spinner cycle: · ✢ ✳ ✶ ✻ ✽ (Claude Code premium style)
   - Elapsed time display
   - Token count tracking
-  - File context visibility (ctrl+o to expand)
-  - Thinking content preview
+  - Tool bullets shown above thinking line
   - Intensity indicators ("almost done thinking with max effort")
 
-After streaming completes, the live display stops cleanly.
+After streaming completes, the live display stops cleanly and normal
+output continues with content above the cleared thinking line area.
 """
 from __future__ import annotations
 
@@ -22,8 +24,11 @@ import time
 from typing import Any
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.text import Text
+from rich.console import ConsoleRenderable
 
 from draguniteus.theming import (
     CYAN, DIM, ORANGE, RESET, WHITE, BLUE, RED, GREEN, YELLOW,
@@ -42,21 +47,13 @@ _live_output_handler: callable | None = None
 
 
 def set_live_output_handler(handler: callable | None) -> None:
-    """Set the global live output handler for real-time tool streaming.
-
-    The handler should be a callable that takes (line: str, is_stderr: bool).
-    This enables tools like Bash to stream output line-by-line as it's produced.
-    """
+    """Set the global live output handler for real-time tool streaming."""
     global _live_output_handler
     _live_output_handler = handler
 
 
 def live_output_line(line: str, is_stderr: bool = False) -> None:
-    """Write a single line of tool output immediately with aggressive flushing.
-
-    This is called by tools during execution to stream output in real-time.
-    Uses sys.stdout.buffer.write for UTF-8 encoding support on Windows.
-    """
+    """Write a single line of tool output immediately with aggressive flushing."""
     global _live_output_handler
     if _live_output_handler:
         try:
@@ -64,7 +61,6 @@ def live_output_line(line: str, is_stderr: bool = False) -> None:
         except Exception:
             pass
     else:
-        # Default: write directly to stdout via Python's buffered IO (respects UTF-8)
         try:
             dim = "\033[90m"
             reset = "\033[0m"
@@ -78,15 +74,60 @@ def live_output_line(line: str, is_stderr: bool = False) -> None:
             pass
 
 
+class ThinkingLine(ConsoleRenderable):
+    """A Rich renderable that displays the thinking status line.
+
+    This is used with Rich.Live to keep the thinking line anchored at the
+    bottom of the terminal while content streams above it.
+    """
+
+    def __init__(
+        self,
+        spinner: str,
+        verb: str,
+        elapsed: str,
+        tokens: str = "",
+        lines_added: str = "",
+        phase: str = "",
+        intensity: str = "",
+        color: str = "",
+    ):
+        super().__init__()
+        self.spinner = spinner
+        self.verb = verb
+        self.elapsed = elapsed
+        self.tokens = tokens
+        self.lines_added = lines_added
+        self.phase = phase
+        self.intensity = intensity
+        self.color = color or DIM
+
+    def render(self, console: Console) -> Text:
+        """Render the thinking line as styled text."""
+        parts = [f"{ORANGE}{self.spinner}{RESET} {self.color}{self.verb}...{RESET}"]
+        parts.append(f"({self.elapsed})")
+
+        if self.tokens:
+            parts.append(f"{DIM}{self.tokens}{RESET}")
+        if self.lines_added:
+            parts.append(f"{DIM}{self.lines_added}{RESET}")
+        if self.phase:
+            parts.append(f" {self.phase}")
+        if self.intensity:
+            parts.append(f"{DIM}{self.intensity}{RESET}")
+
+        return Text(" ".join(parts))
+
+
 class StreamingDisplay:
     """Manages layered progressive display during agent streaming.
 
     Architecture:
-    - Thinking line uses \r carriage-return for in-place ANSI update (works on Windows)
-    - Response text flushed directly via sys.stdout.buffer (progressive char streaming)
+    - Rich.Live for anchored thinking line at bottom (overwrites in place)
+    - Response text buffered and printed after Live stops
     - Tool bullets shown inline when tools execute
 
-    After is_final=True the display stops and final content remains.
+    After is_final=True the live display stops and content stays.
     """
 
     def __init__(self, console: Console, full_drama: bool = True):
@@ -101,23 +142,19 @@ class StreamingDisplay:
         self._spinner_index: int = 0
         self._thinking_verb: str = "Thinking"
         self._lines_added: int = 0
-        self._showing_thinking: bool = False
-        self._last_thinking_len: int = 0
-        self._thinking_line: str = ""  # Store current thinking line for cleanup
-        self._background_tasks: bool = False
         self._tool_name: str | None = None
         self._tool_path: str = ""
         self._tool_args: str = ""
-        self._header_printed: bool = False
-        # Search context tracking
-        self._search_patterns: list[str] = []
-        self._files_reading: list[str] = []
-        self._current_file: str = ""
-        # Workflow phase tracking
-        self._workflow_phase: str = ""  # PLANNING/EXEC/VERIFY/ITERATE badge
+        # Rich.Live state
+        self._live: Live | None = None
+        self._thinking_line: ThinkingLine | None = None
+        self._response_lines: list[str] = []
+        self._tool_bullets: list[str] = []
+        self._thinking_active: bool = False
+        self._thinking_done: bool = False
 
     def start(self, start_time: float) -> None:
-        """Begin the display. Called before the first streaming event."""
+        """Begin the display. Creates Rich.Live for anchored thinking line."""
         self._start_time = start_time
         self._thinking = ""
         self._response = ""
@@ -127,72 +164,28 @@ class StreamingDisplay:
         self._spinner_index = 0
         self._thinking_verb = get_thinking_verb()
         self._lines_added = 0
-        self._showing_thinking = False
-        self._last_thinking_len = 0
-        self._background_tasks = False
         self._tool_name = None
         self._tool_path = ""
         self._tool_args = ""
-        self._header_printed = False
-        self._thinking_content_shown = False
+        self._response_lines = []
+        self._tool_bullets = []
+        self._thinking_active = False
+        self._thinking_done = False
 
-    def update(
-        self,
-        thinking: str,
-        response: str,
-        tokens: int = 0,
-        tool_name: str | None = None,
-        tool_args: str = "",
-        tool_path: str = "",
-        thinking_active: bool = False,
-        thinking_done: bool = False,
-    ) -> None:
-        """Update thinking line on each streaming event.
+        if self.full_drama and self._live is None:
+            # Create initial thinking line
+            self._update_thinking_line()
+            # Create Rich.Live with the thinking line
+            self._live = Live(
+                self._thinking_line,
+                console=self.console,
+                refresh_per_second=10,
+                transient=False,  # Keep content after stop
+            )
+            self._live.start()
 
-        Args:
-            thinking: accumulated thinking text (ignored - only status shown during streaming)
-            response: accumulated response text
-            tokens: current output token count
-            tool_name: name of tool being called (if any)
-            tool_args: args display string for the tool
-            tool_path: file path for sub-item display
-            thinking_active: True while thinking content is being received
-            thinking_done: True once the thinking content block has ended
-        """
-        self._elapsed = time.time() - self._start_time
-        self._thinking = thinking
-        self._response = response
-        self._token_count = tokens
-        self._tool_name = tool_name
-        self._tool_args = tool_args
-        self._tool_path = tool_path
-        self._thinking_active = thinking_active
-        self._thinking_done = thinking_done
-
-        # Advance spinner
-        if self.full_drama:
-            self._spinner_index = (self._spinner_index + 1) % len(STAR_SPINNERS)
-            self._spinner = STAR_SPINNERS[self._spinner_index]
-            # Change verb when thinking block ends (now generating response)
-            if self._thinking_done and not self._thinking_active:
-                self._thinking_verb = "Generating"
-            else:
-                self._thinking_verb = get_thinking_verb()
-
-        # Update thinking line via \r (in-place, works on Windows)
-        # NOTE: We do NOT print thinking content here - only the status line
-        if self.full_drama:
-            self._thinking_print()
-
-    def _thinking_print(self) -> None:
-        """Print thinking line that overwrites itself in-place.
-
-        Uses ANSI escape codes for clean in-place updates:
-        - \x1b[2K\r to erase line and return to column 0
-        - Only prints on a fresh line (never after response text)
-
-        The thinking line format: ✽ Sketching... (time · token count)
-        """
+    def _update_thinking_line(self) -> None:
+        """Update the thinking line renderable."""
         elapsed_str = self._format_elapsed(self._elapsed)
 
         # Build intensity message based on thinking state and elapsed time
@@ -219,77 +212,73 @@ class StreamingDisplay:
 
         # Workflow phase badge
         phase_badge = ""
-        if self._workflow_phase:
+        if hasattr(self, '_workflow_phase') and self._workflow_phase:
             phase_badge = f" {self._workflow_phase}"
 
-        # Build the thinking line: spinner + verb + elapsed + tokens + intensity
-        spinner = getattr(self, '_spinner', STAR_SPINNERS[0])
-        thinking_line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
+        # Get current spinner
+        spinner = STAR_SPINNERS[self._spinner_index]
 
-        try:
-            # CRITICAL: Erase entire line AND overwrite with spaces to ensure clean slate
-            # Then return to column 0 and write new thinking line
-            # This works on Windows conhost and proper terminals alike
-            erase_entire = "\x1b[2K\r"  # Erase from cursor to end of line, then CR
-            sys.stdout.buffer.write(erase_entire.encode('utf-8'))
-            sys.stdout.buffer.write(thinking_line.encode('utf-8', errors='replace'))
-            sys.stdout.buffer.flush()
+        self._thinking_line = ThinkingLine(
+            spinner=spinner,
+            verb=self._thinking_verb,
+            elapsed=elapsed_str,
+            tokens=token_str,
+            lines_added=lines_str,
+            phase=phase_badge,
+            intensity=intensity,
+        )
 
-            self._last_thinking_len = len(thinking_line)
-            self._thinking_line = thinking_line  # Store for cleanup
-            self._showing_thinking = True
-        except Exception:
-            pass
+    def update(
+        self,
+        thinking: str,
+        response: str,
+        tokens: int = 0,
+        tool_name: str | None = None,
+        tool_args: str = "",
+        tool_path: str = "",
+        thinking_active: bool = False,
+        thinking_done: bool = False,
+    ) -> None:
+        """Update display on each streaming event."""
+        self._elapsed = time.time() - self._start_time
+        self._thinking = thinking
+        self._response = response
+        self._token_count = tokens
+        self._tool_name = tool_name
+        self._tool_args = tool_args
+        self._tool_path = tool_path
+        self._thinking_active = thinking_active
+        self._thinking_done = thinking_done
 
-    def clear_thinking_line(self) -> None:
-        """Clear the thinking line completely (call when switching to response)."""
-        if self._showing_thinking:
-            try:
-                # Erase line and print spaces to fully clear any leftover chars
-                clear = "\x1b[2K\r" + " " * max(self._last_thinking_len, 50) + "\x1b[2K\r"
-                sys.stdout.buffer.write(clear.encode('utf-8'))
-                sys.stdout.buffer.flush()
-                self._showing_thinking = False
-            except Exception:
-                pass
+        # Advance spinner
+        self._spinner_index = (self._spinner_index + 1) % len(STAR_SPINNERS)
 
-    def show_thinking_content(self, thinking: str) -> None:
-        """Show thinking content on its own lines when thinking block ends.
+        # Change verb when thinking block ends (now generating response)
+        if thinking_done and not thinking_active:
+            self._thinking_verb = "Generating"
+        else:
+            self._thinking_verb = get_thinking_verb()
 
-        Called when thinking_done=True to display the accumulated thinking
-        content in a clean, non-intrusive way before response starts.
-        """
-        if not thinking or not self.full_drama:
-            return
-        try:
-            dim = DIM
-            reset = RESET
-            # Show first 3 lines of thinking content (or first 300 chars)
-            preview = thinking[:300]
-            if len(thinking) > 300:
-                preview = preview.rsplit('\n', 1)[0] + "\n  [...]"
-            else:
-                # Take first few lines
-                lines = preview.split('\n')
-                if len(lines) > 3:
-                    preview = "\n".join(lines[:3]) + "\n  [...]"
-
-            # Print thinking content with dim styling (with leading newline to separate from thinking line)
-            thinking_display = f"\n  {dim}{preview}{reset}\n"
-            sys.stdout.buffer.write(thinking_display.encode('utf-8', errors='replace'))
-            sys.stdout.buffer.flush()
-        except Exception:
-            pass
+        # Update thinking line via Rich.Live (in-place, anchored at bottom)
+        if self.full_drama and self._live:
+            self._update_thinking_line()
+            self._live.update(self._thinking_line, refresh=True)
 
     def show_tool_start(self, tool_name: str, args_display: str = "", path: str = "") -> None:
         """Show a pulsing tool-start bullet immediately when tool_use block starts."""
         if not self.full_drama:
             return
+
         self._tool_name = tool_name
         self._tool_args = args_display
         self._tool_path = path
+
+        # Store tool bullet for potential use
+        bullet = f"  \033[34m●\033[0m \033[36m{tool_name}\033[0m({args_display})\033[90m…\033[0m"
+        self._tool_bullets.append(bullet)
+
+        # Immediately print to stdout (above the Live display)
         try:
-            bullet = f"\n  \033[34m●\033[0m \033[36m{tool_name}\033[0m({args_display})\033[90m…\033[0m"
             path_display = f"\n    \033[36m⎿\033[0m  {path}\033[90m\033[0m" if path else ""
             display = bullet + path_display
             sys.stdout.buffer.write(display.encode('utf-8', errors='replace'))
@@ -311,7 +300,7 @@ class StreamingDisplay:
             dim = DIM
             reset = RESET
             cyan = CYAN
-            header = f"\n  {cyan}--- {title} ({total} line{'s' if total != 1 else ''}) ---{reset}\n"
+            header = f"\n  {cyan}--- {title} ({total} line{'s' if total != 1 else ''}) ---\n"
             sys.stdout.buffer.write(header.encode('utf-8', errors='replace'))
 
             for i, line in enumerate(display_lines):
@@ -320,11 +309,11 @@ class StreamingDisplay:
                     sys.stdout.buffer.write("  \n".encode('utf-8', errors='replace'))
                     continue
 
-                if any(k in line for line in ["error", "ERROR", "failed", "FAILED", "FAIL"]):
+                if any(k in line for k in ["error", "ERROR", "failed", "FAILED", "FAIL"]):
                     color = RED
-                elif any(k in line for line in ["warning", "WARNING", "WARN", "deprecated"]):
+                elif any(k in line for k in ["warning", "WARNING", "WARN", "deprecated"]):
                     color = YELLOW
-                elif any(k in line for line in ["pass", "PASS", "ok", "OK", "success", "SUCCESS"]):
+                elif any(k in line for k in ["pass", "PASS", "ok", "OK", "success", "SUCCESS"]):
                     color = GREEN
                 elif line.startswith("+") or line.startswith(">"):
                     color = CYAN
@@ -335,10 +324,7 @@ class StreamingDisplay:
                 else:
                     color = WHITE
 
-                try:
-                    sys.stdout.buffer.write(f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
-                except Exception:
-                    sys.stdout.buffer.write(f"  {line}\n".encode('utf-8', errors='replace'))
+                sys.stdout.buffer.write(f"  {color}{line}{reset}\n".encode('utf-8', errors='replace'))
 
                 if i > 0 and i % 50 == 0:
                     sys.stdout.buffer.flush()
@@ -352,43 +338,49 @@ class StreamingDisplay:
             sys.stdout.buffer.flush()
 
         except Exception:
-            try:
-                for line in display_lines[:20]:
-                    sys.stdout.buffer.write(f"{line}\n".encode('utf-8', errors='replace'))
-                sys.stdout.buffer.flush()
-            except Exception:
-                pass
+            pass
 
     def set_search_context(self, patterns: list[str], files_reading: list[str], current_file: str = "") -> None:
         """Set search context for display."""
-        self._search_patterns = patterns
-        self._files_reading = files_reading
-        self._current_file = current_file
-        if current_file and not self._tool_path:
-            self._tool_path = current_file
+        # Could be used for future enhancement
+        pass
 
     def set_lines_added(self, count: int) -> None:
         """Update lines-added counter."""
         self._lines_added = count
+        if self.full_drama and self._live:
+            self._update_thinking_line()
+            self._live.update(self._thinking_line, refresh=True)
 
     def set_background_tasks(self, enabled: bool) -> None:
         """Update background tasks mode."""
-        self._background_tasks = enabled
+        pass
 
     def set_workflow_phase(self, phase: str) -> None:
         """Set the workflow phase badge."""
         self._workflow_phase = phase
+        if self.full_drama and self._live:
+            self._update_thinking_line()
+            self._live.update(self._thinking_line, refresh=True)
 
     def stop(self) -> None:
-        """Stop the display cleanly."""
-        if self._showing_thinking:
+        """Stop the Live display cleanly."""
+        if self._live:
             try:
-                clear = "\x1b[2K\r" + " " * self._last_thinking_len + "\x1b[2K\r"
-                sys.stdout.buffer.write(clear.encode('utf-8', errors='replace'))
-                sys.stdout.buffer.flush()
+                self._live.stop()
             except Exception:
                 pass
-        self._showing_thinking = False
+            self._live = None
+
+    def clear_thinking_line(self) -> None:
+        """Clear the thinking line (called when switching to response)."""
+        # Stop the Live display - content stays, thinking line goes away
+        self.stop()
+
+    def show_thinking_content(self, thinking: str) -> None:
+        """Show thinking content on its own lines when thinking block ends."""
+        # Could show thinking preview here if desired
+        pass
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:

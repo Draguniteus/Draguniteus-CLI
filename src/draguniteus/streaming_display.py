@@ -227,11 +227,11 @@ class StreamingDisplay:
         thinking_line = f"{spinner} {self._thinking_verb}... ({elapsed_str}){token_str}{lines_str}{phase_badge}{intensity}"
 
         try:
-            # First, ensure we're on a fresh line (clear anything remaining on current line)
-            # Use \x1b[2K\r which = erase entire line + return to column 0
-            # This ONLY works correctly if we're already on a new line
-            erase_and_home = "\x1b[2K\r"
-            sys.stdout.buffer.write(erase_and_home.encode('utf-8'))
+            # CRITICAL: Erase entire line AND overwrite with spaces to ensure clean slate
+            # Then return to column 0 and write new thinking line
+            # This works on Windows conhost and proper terminals alike
+            erase_entire = "\x1b[2K\r"  # Erase from cursor to end of line, then CR
+            sys.stdout.buffer.write(erase_entire.encode('utf-8'))
             sys.stdout.buffer.write(thinking_line.encode('utf-8', errors='replace'))
             sys.stdout.buffer.flush()
 

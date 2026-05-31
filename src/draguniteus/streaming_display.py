@@ -23,12 +23,11 @@ import sys
 import time
 from typing import Any
 
-from rich.console import Console, ConsoleRenderable, NewLine
+from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
-from rich.console import RenderOptions
 
 from draguniteus.theming import (
     CYAN, DIM, ORANGE, RESET, WHITE, BLUE, RED, GREEN, YELLOW,

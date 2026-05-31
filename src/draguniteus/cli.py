@@ -492,6 +492,11 @@ def main(
                 # No more input available - exit the REPL
                 break
 
+        # Handle ? for shortcuts help (before any other processing)
+        if user_input.strip() == "?":
+            _show_shortcuts_help()
+            continue
+
         if not user_input.strip():
             continue
 
@@ -1392,6 +1397,57 @@ def _run_one_shot(prompt: str, cfg: Config, client: DraguniteusClient, session_s
             from draguniteus.streaming_display import set_live_output_handler
             set_live_output_handler(None)
             return
+
+
+def _show_shortcuts_help() -> None:
+    """Show keyboard shortcuts help - triggered when user types '?'."""
+    print()
+    print("=" * 60)
+    print(f"{DIM}Claude Code Keyboard Shortcuts{RESET}")
+    print("=" * 60)
+    print()
+    print(f"{DIM}General:{RESET}")
+    print("  Ctrl+C     Cancel current generation")
+    print("  Ctrl+O     Toggle expanded output / transcript")
+    print("  Ctrl+E     Toggle details / open in editor")
+    print("  ?          Show this help")
+    print("  Ctrl+R     Search command history")
+    print()
+    print(f"{DIM}Session:{RESET}")
+    print("  Esc Esc    Rewind conversation / code")
+    print("  Ctrl+S     Stash current prompt")
+    print("  Ctrl+D     Exit / quit")
+    print("  Ctrl+L     Clear screen")
+    print()
+    print(f"{DIM}Input Editing:{RESET}")
+    print("  Ctrl+A     Move cursor to start of line")
+    print("  Ctrl+E     Move cursor to end of line")
+    print("  Ctrl+W     Delete previous word")
+    print("  Ctrl+U     Clear line")
+    print("  Ctrl+K     Delete from cursor to end")
+    print()
+    print(f"{DIM}Tools & Output:{RESET}")
+    print("  Ctrl+O     Expand collapsed tool output")
+    print("  Ctrl+E     Show all content / open in editor")
+    print("  Ctrl+B     Background long operation")
+    print()
+    print(f"{DIM}Permissions:{RESET}")
+    print("  Shift+Tab  Cycle permission mode")
+    print("  Tab        Accept suggestion")
+    print()
+    print(f"{DIM}Slash Commands:{RESET}")
+    print("  /help      Show all commands")
+    print("  /keybindings  Show keyboard shortcuts")
+    print("  /compact   Compact conversation context")
+    print("  /resume    Resume a session")
+    print("  /clear     Clear conversation")
+    print("=" * 60)
+    print()
+    print(f"{DIM}Press Enter to return...{RESET}", end="", flush=True)
+    try:
+        input()
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def _read_input() -> str:

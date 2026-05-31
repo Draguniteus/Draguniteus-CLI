@@ -409,17 +409,55 @@ def stream_one_turn(
         except Exception as e:
             tool_results.append({"tool": tc.get("name", "?"), "result": f"Execution error: {e}", "success": False, "parsed": {}})
 
+    # --- Second pass: get synthesized response after tool results ---
+    # Add assistant message with tool calls, then tool results as user message
+    for tc, result_dict in zip(pending_tool_calls, tool_results):
+        name = tc.get("name", "")
+        args = tc.get("args", "")
+        try:
+            parsed_args = json.loads(args) if args else {}
+        except json.JSONDecodeError:
+            parsed_args = {"raw": args}
+        api_messages.append({
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": name, "input": parsed_args}]
+        })
+        api_messages.append({
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": tc.get("id", ""), "content": str(result_dict.get("result", ""))}]
+        })
+
+    # Second streaming pass to get the model's synthesized response
+    handler2 = StreamHandler(console, full_drama)
+    stream2 = client.stream(
+        messages=api_messages,
+        tools=tools,
+        system=system,
+        betas=betas,
+    )
+    for event in stream2:
+        handler2.handle_event(event)
+
+    # Get the synthesized response from second pass
+    synthesized_text = handler2.get_text()
+    synthesized_thinking = handler2.get_thinking()
+    in_tok2, out_tok2 = handler2.get_usage()
+
     in_tok, out_tok = handler.get_usage()
+    # Combine usage from both passes
+    total_in_tok = in_tok + in_tok2
+    total_out_tok = out_tok + out_tok2
+
     is_final = True
-    thinking_active = handler.is_thinking_active()
-    thinking_done = handler.is_thinking_done()
-    estimated_tokens = out_tok  # At final, use actual output tokens
+    thinking_active = handler2.is_thinking_active()
+    thinking_done = handler2.is_thinking_done()
+    estimated_tokens = total_out_tok
     # Store on handler AND on function for backward compatibility
-    handler._input_tokens = in_tok
-    handler._output_tokens = out_tok
-    stream_one_turn._last_usage = in_tok + out_tok
-    # Yield tool_results (executed) instead of pending_tool_calls
-    yield handler.get_text(), handler.get_thinking(), tool_results, True, thinking_active, thinking_done, estimated_tokens
+    handler._input_tokens = total_in_tok
+    handler._output_tokens = total_out_tok
+    stream_one_turn._last_usage = total_in_tok + total_out_tok
+    # Yield synthesized text + tool_results
+    yield synthesized_text, synthesized_thinking, tool_results, True, thinking_active, thinking_done, estimated_tokens
 
 
 def execute_tool_calls(

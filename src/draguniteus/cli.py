@@ -892,23 +892,27 @@ def main(
         except Exception:
             pass
 
-        # Print FULL WIDTH DIVIDER before bottom bar (Claude Code style framing)
+        # Print FULL WIDTH TOP DIVIDER (frames the input area from above)
         if _full_drama:
             print_divider(_full_drama)
 
-        # Show bottom bar in Claude Code style (always show ctrl+o/ctrl+e controls)
+        # Print prompt line (❯) - user input happens here, between the two dividers
+        # The actual input is read AFTER this by the prompt session
+
+        # Print FULL WIDTH BOTTOM DIVIDER (frames the input area from below)
+        if _full_drama:
+            print_divider(_full_drama)
+
+        # Print bottom bar controls AND ? for shortcuts on SAME LINE (BELOW bottom divider)
+        # This matches Claude Code where shortcuts appear BELOW the input framing lines
         if _full_drama:
             if _pending_edits:
                 print_bottom_bar(has_edits=True, edit_count=len(_pending_edits))
             else:
                 print_bottom_bar(has_edits=False)
 
-        # Print shortcuts hint on SAME LINE as bottom bar (no extra newline)
+        # Print ? for shortcuts on SAME LINE as bottom bar (no newline)
         print_shortcuts_line()
-
-        # Print FULL WIDTH DIVIDER AFTER prompt area (Claude Code style - frames the input area with TWO lines)
-        if _full_drama:
-            print_divider(_full_drama)
 
         # --- Auto-checkpoint every N turns ---
         try:

@@ -906,8 +906,9 @@ def main(
         # Print shortcuts hint on SAME LINE as bottom bar (no extra newline)
         print_shortcuts_line()
 
-        # Print blank line before prompt (Claude Code style)
-        console.print()
+        # Print FULL WIDTH DIVIDER AFTER prompt area (Claude Code style - frames the input area with TWO lines)
+        if _full_drama:
+            print_divider(_full_drama)
 
         # --- Auto-checkpoint every N turns ---
         try:

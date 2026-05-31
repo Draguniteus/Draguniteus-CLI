@@ -516,11 +516,11 @@ def print_bottom_bar(has_edits: bool = False, edit_count: int = 0) -> None:
 def print_shortcuts_line() -> None:
     """Print '? for shortcuts' line (Claude Code style, dim gray)."""
     try:
-        sys.stdout.buffer.write(f"{DIM}  ? for shortcuts{RESET}".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.write(f"{DIM}  ? for shortcuts{RESET}\n".encode('utf-8', errors='replace'))
         sys.stdout.buffer.flush()
     except Exception:
         try:
-            print(f"{DIM}  ? for shortcuts{RESET}", end="")
+            print(f"{DIM}  ? for shortcuts{RESET}")
         except Exception:
             pass
 

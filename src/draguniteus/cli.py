@@ -558,6 +558,11 @@ def main(
         if display:
             display.start(start)
 
+        # Show streaming bottom bar (esc to interrupt) - Claude Code style
+        if _full_drama:
+            from draguniteus.theming import print_streaming_bottom
+            print_streaming_bottom()
+
         # Register live output handler for real-time tool output streaming
         from draguniteus.streaming_display import set_live_output_handler, CYAN, DIM, RESET, RED, GREEN, YELLOW
         _live_tool_name = [None]  # closure-safe mutable cell

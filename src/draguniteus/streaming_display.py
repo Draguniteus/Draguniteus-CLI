@@ -86,6 +86,7 @@ class ThinkingLine:
         phase: str = "",
         intensity: str = "",
         color: str = "",
+        streaming: bool = True,
     ):
         self.spinner = spinner
         self.verb = verb
@@ -95,10 +96,14 @@ class ThinkingLine:
         self.phase = phase
         self.intensity = intensity
         self.color = color or DIM
+        self.streaming = streaming
 
     def to_rich_text(self) -> Text:
         """Convert to Rich Text for display."""
-        parts = [f"{ORANGE}{self.spinner}{RESET} {self.color}{self.verb}...{RESET}"]
+        # Format: + Reasoning... (or + Thinking...) - Claude Code style
+        # The + prefix indicates live streaming
+        prefix = f"{ORANGE}+{RESET} "
+        parts = [f"{prefix}{self.color}{self.verb}...{RESET}"]
         parts.append(f"({self.elapsed})")
 
         if self.tokens:
@@ -116,12 +121,11 @@ class ThinkingLine:
 class StreamingDisplay:
     """Manages layered progressive display during agent streaming.
 
-    Architecture:
-    - Rich.Live for anchored thinking line at bottom (overwrites in place)
-    - Response text buffered and printed after Live stops
-    - Tool bullets shown inline when tools execute
-
-    After is_final=True the live display stops and content stays.
+    Live streaming UX features (Claude Code style):
+    - "+ Reasoning..." status at top with orange + prefix
+    - Real-time steering tip: "Send messages while it works to steer in real-time"
+    - Bottom shows "esc to interrupt" during streaming
+    - After is_final=True the live display stops and content stays.
     """
 
     def __init__(self, console: Console, full_drama: bool = True):
@@ -146,9 +150,10 @@ class StreamingDisplay:
         self._tool_bullets: list[str] = []
         self._thinking_active: bool = False
         self._thinking_done: bool = False
+        self._tip_shown: bool = False
 
     def start(self, start_time: float) -> None:
-        """Begin the display. Creates Rich.Live for anchored thinking line."""
+        """Begin the display. Creates Rich.Live for thinking line with Claude Code UX."""
         self._start_time = start_time
         self._thinking = ""
         self._response = ""
@@ -165,10 +170,15 @@ class StreamingDisplay:
         self._tool_bullets = []
         self._thinking_active = False
         self._thinking_done = False
+        self._tip_shown = False
 
-        if self.full_drama and self._live is None:
+        if self.full_drama:
+            # Print real-time steering tip (Claude Code style)
+            self._show_streaming_tip()
+
             # Create initial thinking line
             self._update_thinking_line()
+
             # Create Rich.Live with the thinking line
             self._live = Live(
                 self._thinking_line,
@@ -177,6 +187,19 @@ class StreamingDisplay:
                 transient=False,  # Keep content after stop
             )
             self._live.start()
+
+    def _show_streaming_tip(self) -> None:
+        """Show the real-time steering tip - Claude Code UX feature."""
+        if self._tip_shown:
+            return
+        self._tip_shown = True
+        try:
+            from draguniteus.theming import DIM, RESET
+            tip = f"{DIM}Tip: Send messages while it works to steer in real-time{RESET}\n"
+            sys.stdout.buffer.write(tip.encode('utf-8', errors='replace'))
+            sys.stdout.buffer.flush()
+        except Exception:
+            pass
 
     def _update_thinking_line(self) -> None:
         """Update the thinking line renderable."""

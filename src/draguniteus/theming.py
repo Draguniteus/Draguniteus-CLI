@@ -529,6 +529,22 @@ def print_shortcuts_line() -> None:
             pass
 
 
+def print_streaming_bottom() -> None:
+    """Print bottom bar during live streaming - shows esc to interrupt (Claude Code style).
+
+    This replaces '? for shortcuts' during generation. After generation completes,
+    print_shortcuts_line() restores the normal footer.
+    """
+    try:
+        sys.stdout.buffer.write(f"\n  {DIM}esc to interrupt{RESET}".encode('utf-8', errors='replace'))
+        sys.stdout.buffer.flush()
+    except Exception:
+        try:
+            print(f"\n  {DIM}esc to interrupt{RESET}", end="")
+        except Exception:
+            pass
+
+
 def print_tool_call(tool_name: str, args_display: str = "", status: str = "", collapsed_hint: bool = False) -> None:
     """Print a tool call like Claude Code: ● Bash(command) (status)
 
